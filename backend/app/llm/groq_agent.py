@@ -106,7 +106,17 @@ CATALOG_TOOLS = [
 
 
 def _extract_budget_dynamically(text: str) -> Optional[float]:
-    """Extract numeric budget constraint dynamically from query text."""
+    """Extract numeric budget constraint dynamically from query text, including Indian currency units."""
+    # Check for lakh/lac (e.g. '2 lakh', '1.5 lakhs', '2 lac')
+    lakh_match = re.search(r'(\d+(?:\.\d+)?)\s*(?:lakh|lakhs|lac|lacs)', text, re.IGNORECASE)
+    if lakh_match:
+        return float(lakh_match.group(1)) * 100000.0
+
+    # Check for k (e.g. '50k', '5k')
+    k_match = re.search(r'(?:under|below|budget|max|for|upto|within|₹|rs\.?|inr)?\s*(\d+(?:\.\d+)?)\s*k\b', text, re.IGNORECASE)
+    if k_match:
+        return float(k_match.group(1)) * 1000.0
+
     found = re.search(r"(?:under|below|budget|max|for|upto|within)\s*(?:rs\.?|inr|₹)?\s*(\d[\d,]*)", text, re.IGNORECASE)
     if not found:
         found = re.search(r"(\d[\d,]*)\s*(?:rs|inr|rupees|₹)", text, re.IGNORECASE)
