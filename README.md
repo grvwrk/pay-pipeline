@@ -83,7 +83,7 @@ human buyers, external ai buyers over acp/mcp, and the merchant dashboard all en
 an event-driven workflow splits every incoming request into typed steps: intent routing, catalog lookup, upsell/cross-sell, checkout. none of these steps holds access to a money tool directly — they can only reach the guardrail.
 
 ### guardrail & policy engine
-sits between the orchestrator and the money tools, independent of any model. checks spend limits, currency, approval requirements, and idempotency before anything is allowed through. limits are configurable, not hardcoded — set by the merchant, not baked into the code.
+sits between the orchestrator and the money tools, independent of any model. checks spend limits, currency, approval requirements, and idempotency before anything is allowed through. limits are configurable.
 
 ### tool layer
 split by privilege. read/decision tools handle catalog and bundling logic and never touch money. money tools create orders and capture payments, and only unlock once the guardrail approves the request.
