@@ -24,6 +24,26 @@ export const RazorpayCheckoutModal: React.FC<RazorpayCheckoutModalProps> = ({
   const handlePay = async (shouldFail: boolean = false) => {
     setIsProcessing(true);
     try {
+      const checkout = await api.getCheckoutConfig();
+      if (checkout.provider_mode === "razorpay") {
+        if (shouldFail) throw new Error("Failure simulation is only available in local simulator mode.");
+        if (!checkout.razorpay_key_id || !(window as any).Razorpay) throw new Error("Razorpay Checkout failed to load.");
+        const razorpay = new (window as any).Razorpay({
+          key: checkout.razorpay_key_id,
+          amount: order.amount_in_paise,
+          currency: order.currency,
+          name: "pay-pipeline",
+          description: `Order ${order.order_id}`,
+          order_id: order.order_id,
+          handler: (response: { razorpay_payment_id: string }) => {
+            onPaymentComplete(response.razorpay_payment_id, "pending");
+            onClose();
+          },
+          modal: { ondismiss: () => setIsProcessing(false) }
+        });
+        razorpay.open();
+        return;
+      }
       const result = await api.initiatePayment(order.order_id, order.amount, method, shouldFail);
       const paymentId = result.payment?.payment_id || "pending";
       onPaymentComplete(paymentId, result.verification_pending ? "pending" : "failed");

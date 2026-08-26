@@ -1,13 +1,13 @@
+from typing import Any, Dict, List, Optional
 from llama_index.core.workflow import Event
-from typing import Optional, List, Dict, Any
-from backend.app.models.cart import Cart, BundleOffer
 from backend.app.models.catalog import Product
-from backend.app.models.guardrail import PolicyEvaluationResult
+from backend.app.models.cart import BundleOffer, Cart
+
 
 class IntentClassifiedEvent(Event):
-    intent: str  # SEARCH, UPSELL, BUY, APPROVE, REFUND, CAMPAIGN, STATUS
+    intent: str
     user_query: str
-    user_id: str
+    user_id: str = "user_default_buyer"
     target_sku: Optional[str] = None
     target_category: Optional[str] = None
     max_price: Optional[float] = None
@@ -15,53 +15,65 @@ class IntentClassifiedEvent(Event):
     approval_token: Optional[str] = None
     idempotency_key: Optional[str] = None
     force_fail_payment: bool = False
+    order_id: Optional[str] = None
+    payment_id: Optional[str] = None
+    refund_amount: Optional[float] = None
+
 
 class CatalogSearchEvent(Event):
-    query: Optional[str]
-    category: Optional[str]
-    max_price: Optional[float]
-    user_id: str
-    include_bundle_analysis: bool = True
+    query: Optional[str] = None
+    category: Optional[str] = None
+    max_price: Optional[float] = None
+    user_id: str = "user_default_buyer"
+    intent: str = "PRODUCT_SEARCH"
+
 
 class CatalogResultEvent(Event):
     products: List[Product]
-    top_choice: Optional[Product]
-    upsell_bundle: Optional[BundleOffer]
-    user_query: str
-    user_id: str
+    top_choice: Optional[Product] = None
+    upsell_bundle: Optional[BundleOffer] = None
+    user_query: str = ""
+    user_id: str = "user_default_buyer"
+    agent_summary: Optional[str] = None
+    tool_calls: List[Dict[str, Any]] = []
+    provider: str = "deterministic"
 
-class UpsellEvent(Event):
-    primary_product: Product
-    user_id: str
-    user_query: Optional[str] = None
-
-class UpsellResultEvent(Event):
-    primary_product: Product
-    bundle: Optional[BundleOffer]
-    user_id: str
-    recommendation_text: str
 
 class CheckoutEvent(Event):
-    user_id: str
+    user_id: str = "user_default_buyer"
     target_sku: Optional[str] = None
-    query: Optional[str] = None
+    query: str = ""
     max_price: Optional[float] = None
     include_bundle: bool = False
     approval_token: Optional[str] = None
     idempotency_key: Optional[str] = None
     force_fail_payment: bool = False
 
+
+class CheckoutCartEvent(Event):
+    cart: Cart
+    user_id: str = "user_default_buyer"
+    approval_token: Optional[str] = None
+    idempotency_key: Optional[str] = None
+    reasoning_steps: List[Dict[str, Any]] = []
+    force_fail_payment: bool = False
+
+
 class ApprovalConfirmationEvent(Event):
-    user_id: str
+    user_id: str = "user_default_buyer"
     approval_token: str
     target_sku: Optional[str] = None
     idempotency_key: Optional[str] = None
 
 
-class CheckoutCartEvent(Event):
-    """A cart assembled by Checkout Agent; only Policy Agent may advance it."""
-    cart: Cart
-    user_id: str
-    approval_token: Optional[str] = None
-    idempotency_key: Optional[str] = None
-    reasoning_steps: List[Dict[str, Any]] = []
+class RefundRequestEvent(Event):
+    payment_id: str
+    refund_amount: Optional[float] = None
+    user_id: str = "user_default_buyer"
+    reason: str = "Customer request"
+
+
+class StatusQueryEvent(Event):
+    query_type: str = "ORDER"  # ORDER or PAYMENT
+    entity_id: str = ""
+    user_id: str = "user_default_buyer"

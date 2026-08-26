@@ -80,7 +80,8 @@ flowchart TD
 
 ### 1. Multi-Agent Orchestrator (LlamaIndex Workflows)
 - Event-driven async state machine built on `llama-index-core` (`Workflow`, `Event`, `step`, `Context`, `StartEvent`, `StopEvent`).
-- Dynamic intent classification, entity extraction, and intelligent product matching.
+- Separate Intent Router, Catalog, Upsell, Checkout, Approval, and Policy workflow steps with typed events.
+- With `LLM_PROVIDER=groq`, Catalog Agent uses Groq function calling with `openai/gpt-oss-20b` and an allowlisted `search_catalog` tool. It does not have money-tool access.
 
 ### 2. Merchant Revenue Growth Engine
 - **Dynamic Bundling**: Upsell agent identifies high-affinity accessories (e.g. Keychron K2 mechanical keyboard + Solid Walnut Wrist Rest) and calculates bounded 5% bundle discounts, increasing Average Order Value (AOV) by +40.6%.
@@ -93,7 +94,8 @@ flowchart TD
 - **Idempotency Protection**: In-memory cache preventing duplicate charges on retry.
 
 ### 4. Razorpay Test-Mode & Authoritative Webhook State Machine
-- Local simulator by default; it creates test orders and supports a deliberate declined-payment demo. A production Razorpay adapter must be configured with environment credentials before it can initiate a real test-mode request.
+- Local simulator by default; it creates test orders and supports a deliberate declined-payment demo.
+- Set `PAYMENT_PROVIDER_MODE=razorpay` with Razorpay test credentials to create a real Razorpay test order and launch Razorpay Checkout. The Razorpay secret remains server-only.
 - Authoritative `X-Razorpay-Signature` HMAC-SHA256 verification.
 - Zero payment hallucinations: payment initiation is recorded as `PENDING`; orders are only marked complete when confirmed by an authoritative webhook event.
 
@@ -122,6 +124,14 @@ pytest
 ### Configuration
 
 The repository contains no payment or signing secrets. The default `PAYMENT_PROVIDER_MODE=simulator` is safe for local demos. For a Razorpay-backed adapter, provide `RAZORPAY_KEY_ID`, `RAZORPAY_KEY_SECRET`, `RAZORPAY_WEBHOOK_SECRET`, and `AUDIT_HMAC_SECRET` through the environment; never commit them.
+
+For model-backed agents, copy `.env.example`, set `LLM_PROVIDER=groq`, add `GROQ_API_KEY`, and install backend dependencies:
+
+```bash
+pip install -r requirements.txt
+```
+
+The default `LLM_PROVIDER=deterministic` is intentionally offline for tests. Set `ENABLE_GROQ_BROWSER_SEARCH=true` only when you want to permit Groq's optional browser-search tool; it never supplies catalog prices or inventory.
 
 ### Backend
 ```bash

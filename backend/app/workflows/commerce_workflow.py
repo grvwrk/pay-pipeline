@@ -1,9 +1,8 @@
-"""Event-driven, least-privilege agent orchestration for agentic commerce."""
-
-import re
+import asyncio
+import time
 import uuid
+import re
 from typing import Any, Dict, Optional, Union
-
 from llama_index.core.workflow import Context, StartEvent, StopEvent, Workflow, step
 
 from backend.app.audit.audit_service import audit_service
@@ -12,94 +11,217 @@ from backend.app.models.cart import Cart, CartItem
 from backend.app.models.catalog import ProductFilter
 from backend.app.tools.money_tools import money_tools
 from backend.app.tools.read_tools import read_tools
+from backend.app.tools.dispatcher import tool_dispatcher
+from backend.app.llm.groq_agent import groq_catalog_agent
 from backend.app.workflows.events import (
     ApprovalConfirmationEvent, CatalogResultEvent, CatalogSearchEvent,
     CheckoutCartEvent, CheckoutEvent, IntentClassifiedEvent,
+    RefundRequestEvent, StatusQueryEvent
 )
 
 
-def _trace(agent: str, thought: str, action: str, **extra: Any) -> Dict[str, Any]:
-    """Explain actions and tool choices without exposing chain-of-thought."""
-    return {"agent_name": agent, "thought": thought, "action": action, **extra}
-
-
-def _category(query: str) -> Optional[str]:
-    categories = {
-        "nutrition_and_fitness": ("peanut", "protein", "nutrition", "chia", "shaker", "gym", "diet", "whey", "snack", "supplement"),
-        "running_shoes": ("running", "shoes", "shoe", "sneaker", "pegasus", "marathon", "socks"),
-        "mechanical_keyboards": ("keyboard", "keychron", "typing", "switch", "rk84", "ducky"),
-        "ergonomics": ("mouse", "mice", "vertical", "ergonomic", "wrist"),
-        "audio_equipment": ("headphone", "headset", "audio", "anc", "sound"),
-        "smartphones": ("phone", "smartphone", "mobile", "android", "iphone", "pixel", "galaxy"),
-        "developer_gear": ("screenbar", "dock", "hub", "usbc"),
-        "workspace_accessories": ("desk", "deskmat", "stand", "cable", "mat"),
+def _trace(agent: str, thought: str, action: str, latency_ms: float = 0.0, **extra: Any) -> Dict[str, Any]:
+    return {
+        "agent_name": agent,
+        "thought": thought,
+        "action": action,
+        "latency_ms": round(latency_ms, 2),
+        **extra
     }
-    return next((name for name, words in categories.items() if any(word in query for word in words)), None)
-
-
-def _budget(query: str) -> Optional[float]:
-    found = re.search(r"(?:under|below|budget|max|for)\s*(?:rs\.?|inr|₹)?\s*(\d[\d,]*)", query)
-    if not found:
-        found = re.search(r"(\d[\d,]*)\s*(?:rs|inr|rupees|₹)", query)
-    return float(found.group(1).replace(",", "")) if found else None
 
 
 class AgenticCommerceWorkflow(Workflow):
-    """Typed LlamaIndex multi-agent workflow with scoped tool permissions."""
+    """
+    Event-driven LlamaIndex multi-agent commerce workflow.
+    Coordinates Intent Router, Catalog Agent, Upsell Agent, Checkout Agent,
+    Refund Agent, and Policy Agent through the controlled ToolDispatcher.
+    """
 
     @step
     async def intent_router(self, ctx: Context, ev: StartEvent) -> IntentClassifiedEvent:
+        start_t = time.perf_counter()
         query = ev.get("user_message", "").strip()
-        lower = query.lower()
+        user_id = ev.get("user_id", "user_default_buyer")
         approval = ev.get("approval_token")
         sku = ev.get("sku")
-        checkout_words = ("buy", "checkout", "purchase", "place order", "order now", "get me", "i'll take")
-        intent = "APPROVE" if approval else ("CHECKOUT" if sku or any(word in lower for word in checkout_words) else "DISCOVERY")
-        return IntentClassifiedEvent(intent=intent, user_query=query, user_id=ev.get("user_id", "user_default_buyer"),
-            target_sku=sku, target_category=_category(lower), max_price=_budget(lower),
-            include_bundle=any(word in lower for word in ("bundle", "both", "wrist rest", "charger", "case", "cable", "accessories")),
-            approval_token=approval, idempotency_key=ev.get("idempotency_key") or f"idem_{uuid.uuid4().hex[:12]}",
-            force_fail_payment=ev.get("force_fail_payment", False))
+        order_id = ev.get("order_id")
+        payment_id = ev.get("payment_id")
+
+        classified = await asyncio.to_thread(groq_catalog_agent.route_intent, query, user_id)
+        latency = (time.perf_counter() - start_t) * 1000.0
+
+        intent = "APPROVE" if approval else classified.intent
+
+        # Extract payment/order IDs from query text if present
+        if not order_id:
+            ord_m = re.search(r'(order_[a-zA-Z0-9]+)', query)
+            if ord_m:
+                order_id = ord_m.group(1)
+        if not payment_id:
+            pay_m = re.search(r'(pay_[a-zA-Z0-9]+)', query)
+            if pay_m:
+                payment_id = pay_m.group(1)
+
+        refund_amt = None
+        if intent == "REFUND":
+            amt_m = re.search(r'(?:rs\.?|inr|₹)?\s*(\d[\d,.]*)', query)
+            if amt_m:
+                try:
+                    refund_amt = float(amt_m.group(1).replace(",", ""))
+                except Exception:
+                    refund_amt = None
+
+        audit_service.record_event(
+            actor_id=user_id,
+            actor_role="INTENT_ROUTER",
+            action="INTENT_CLASSIFIED",
+            intent=intent,
+            arguments={"query": query, "intent": intent, "entities": classified.entities},
+            guardrail_decision="APPROVED",
+            result_status="SUCCESS",
+            latency_ms=latency,
+            explainability_notes=f"Classified prompt intent as '{intent}' with confidence {classified.confidence:.2f} via {classified.provider}."
+        )
+
+        return IntentClassifiedEvent(
+            intent=intent,
+            user_query=query,
+            user_id=user_id,
+            target_sku=sku or classified.sku,
+            target_category=classified.category,
+            max_price=classified.max_price,
+            include_bundle=classified.include_bundle,
+            approval_token=approval,
+            idempotency_key=ev.get("idempotency_key") or f"idem_{uuid.uuid4().hex[:12]}",
+            force_fail_payment=ev.get("force_fail_payment", False),
+            order_id=order_id,
+            payment_id=payment_id,
+            refund_amount=refund_amt
+        )
 
     @step
-    async def route_intent(self, ctx: Context, ev: IntentClassifiedEvent) -> Union[CatalogSearchEvent, CheckoutEvent, ApprovalConfirmationEvent]:
-        if ev.intent == "DISCOVERY":
-            return CatalogSearchEvent(query=ev.user_query, category=ev.target_category, max_price=ev.max_price, user_id=ev.user_id)
-        if ev.intent == "APPROVE":
-            return ApprovalConfirmationEvent(user_id=ev.user_id, approval_token=ev.approval_token or "", target_sku=ev.target_sku, idempotency_key=ev.idempotency_key)
-        return CheckoutEvent(user_id=ev.user_id, target_sku=ev.target_sku, query=ev.user_query, max_price=ev.max_price,
-            include_bundle=ev.include_bundle, approval_token=ev.approval_token, idempotency_key=ev.idempotency_key)
+    async def route_intent(
+        self,
+        ctx: Context,
+        ev: IntentClassifiedEvent
+    ) -> Union[CatalogSearchEvent, CheckoutEvent, ApprovalConfirmationEvent, RefundRequestEvent, StatusQueryEvent]:
+        if ev.intent in {"PRODUCT_SEARCH", "PRODUCT_DETAILS", "PRODUCT_RECOMMENDATION", "GENERAL_COMMERCE_QUERY", "DISCOVERY"}:
+            return CatalogSearchEvent(
+                query=ev.user_query,
+                category=ev.target_category,
+                max_price=ev.max_price,
+                user_id=ev.user_id,
+                intent=ev.intent
+            )
+        elif ev.intent == "APPROVE":
+            return ApprovalConfirmationEvent(
+                user_id=ev.user_id,
+                approval_token=ev.approval_token or "",
+                target_sku=ev.target_sku,
+                idempotency_key=ev.idempotency_key
+            )
+        elif ev.intent == "REFUND" and ev.payment_id:
+            return RefundRequestEvent(
+                payment_id=ev.payment_id,
+                refund_amount=ev.refund_amount,
+                user_id=ev.user_id
+            )
+        elif ev.intent in {"ORDER_STATUS", "PAYMENT_STATUS"}:
+            return StatusQueryEvent(
+                query_type="ORDER" if ev.intent == "ORDER_STATUS" else "PAYMENT",
+                entity_id=ev.order_id or ev.payment_id or "unknown",
+                user_id=ev.user_id
+            )
+        else:
+            return CheckoutEvent(
+                user_id=ev.user_id,
+                target_sku=ev.target_sku,
+                query=ev.user_query,
+                max_price=ev.max_price,
+                include_bundle=ev.include_bundle,
+                approval_token=ev.approval_token,
+                idempotency_key=ev.idempotency_key,
+                force_fail_payment=ev.force_fail_payment
+            )
 
     @step
     async def approval_agent(self, ctx: Context, ev: ApprovalConfirmationEvent) -> CheckoutEvent:
         policy_engine.register_human_approval(ev.approval_token)
-        return CheckoutEvent(user_id=ev.user_id, target_sku=ev.target_sku, query="approved checkout", approval_token=ev.approval_token, idempotency_key=ev.idempotency_key)
+        return CheckoutEvent(
+            user_id=ev.user_id,
+            target_sku=ev.target_sku,
+            query="approved checkout",
+            approval_token=ev.approval_token,
+            idempotency_key=ev.idempotency_key
+        )
 
     @step
     async def catalog_agent(self, ctx: Context, ev: CatalogSearchEvent) -> CatalogResultEvent:
-        products = read_tools.catalog_lookup(ProductFilter(query=ev.query, category=ev.category, max_price=ev.max_price))
+        start_t = time.perf_counter()
+        agent_result = await asyncio.to_thread(groq_catalog_agent.run, ev.query or "", ev.category, ev.max_price)
+        latency = (time.perf_counter() - start_t) * 1000.0
+
+        products = agent_result.products
         top = products[0] if products else None
-        audit_service.record_event(actor_id=ev.user_id, actor_role="CATALOG_AGENT", action="CATALOG_SEARCH_COMPLETED", tool_name="catalog_lookup",
-            arguments={"query": ev.query, "category": ev.category, "max_price": ev.max_price, "results_count": len(products)}, result_status="SUCCESS",
-            explainability_notes="Catalog Agent executed a read-only catalog query.")
-        return CatalogResultEvent(products=products, top_choice=top, upsell_bundle=None, user_query=ev.query or "", user_id=ev.user_id)
+
+        audit_service.record_event(
+            actor_id=ev.user_id,
+            actor_role="CATALOG_AGENT",
+            action="CATALOG_SEARCH_COMPLETED",
+            tool_name="search_products",
+            arguments={"query": ev.query, "category": ev.category, "max_price": ev.max_price, "results_count": len(products)},
+            guardrail_decision="APPROVED",
+            result_status="SUCCESS",
+            latency_ms=latency,
+            explainability_notes=f"Catalog Agent retrieved {len(products)} matching in-stock candidate(s) via {agent_result.provider}."
+        )
+
+        return CatalogResultEvent(
+            products=products,
+            top_choice=top,
+            upsell_bundle=None,
+            user_query=ev.query or "",
+            user_id=ev.user_id,
+            agent_summary=agent_result.summary,
+            tool_calls=agent_result.tool_calls,
+            provider=agent_result.provider
+        )
 
     @step
     async def upsell_agent(self, ctx: Context, ev: CatalogResultEvent) -> StopEvent:
-        trace = [_trace("Catalog Agent", f"Read-only catalog search returned {len(ev.products)} candidate(s).", "SEARCH_CATALOG", tool_called="catalog_lookup")]
+        trace = [_trace("Catalog Agent", f"Read-only catalog search returned {len(ev.products)} candidate(s) via {ev.provider}.", "SEARCH_CATALOG", tool_called="search_catalog", arguments={"tool_calls": ev.tool_calls})]
+
         if not ev.top_choice:
-            return StopEvent(result={"type": "CATALOG_DISCOVERY", "message": "No in-stock catalog items match this request.", "products": [], "top_choice": None, "upsell_bundle": None, "reasoning_steps": trace})
+            return StopEvent(result={
+                "type": "CATALOG_DISCOVERY",
+                "message": "No in-stock catalog items match this request.",
+                "products": [],
+                "top_choice": None,
+                "upsell_bundle": None,
+                "reasoning_steps": trace
+            })
+
         bundle = read_tools.calculate_upsell_bundle(ev.top_choice.id)
         if bundle:
-            trace.append(_trace("Upsell Agent", f"Affinity rules found a complementary product for {ev.top_choice.name}.", "RECOMMEND_BUNDLE", tool_called="calculate_upsell_bundle", result_summary=f"Bundle saves ₹{bundle.savings_amount:,.2f}."))
-        specs = "\n".join(f"• {key.replace('_', ' ').title()}: {value}" for key, value in list(ev.top_choice.specs.items())[:3])
+            trace.append(_trace("Upsell Agent", f"Identified high-affinity companion accessory for {ev.top_choice.name}.", "RECOMMEND_BUNDLE", tool_called="calculate_upsell_bundle", result_summary=f"Bundle discount saves ₹{bundle.savings_amount:,.2f}."))
+
+        specs = "\n".join(f"• {k.replace('_', ' ').title()}: {v}" for k, v in list(ev.top_choice.specs.items())[:3])
         message = f"I found {len(ev.products)} matching option(s). Top recommendation: **{ev.top_choice.name}** at ₹{ev.top_choice.price:,.2f} (Rating: {ev.top_choice.rating}★)."
         if specs:
             message += f"\n\n{specs}"
+        if ev.agent_summary:
+            message += f"\n\n{ev.agent_summary}"
         if bundle:
             message += f"\n\nSuggested bundle: **{bundle.complementary_product_name}**; total ₹{bundle.discounted_bundle_price:,.2f}, saving ₹{bundle.savings_amount:,.2f}."
-        return StopEvent(result={"type": "CATALOG_DISCOVERY", "message": message, "products": [product.model_dump() for product in ev.products],
-            "top_choice": ev.top_choice.model_dump(), "upsell_bundle": bundle.model_dump() if bundle else None, "reasoning_steps": trace})
+
+        return StopEvent(result={
+            "type": "CATALOG_DISCOVERY",
+            "message": message,
+            "products": [p.model_dump() for p in ev.products],
+            "top_choice": ev.top_choice.model_dump(),
+            "upsell_bundle": bundle.model_dump() if bundle else None,
+            "reasoning_steps": trace
+        })
 
     @step
     async def checkout_agent(self, ctx: Context, ev: CheckoutEvent) -> Union[CheckoutCartEvent, StopEvent]:
@@ -107,33 +229,117 @@ class AgenticCommerceWorkflow(Workflow):
         if not product:
             candidates = read_tools.catalog_lookup(ProductFilter(query=ev.query, max_price=ev.max_price))
             product = candidates[0] if candidates else None
+
         if not product:
-            return StopEvent(result={"type": "CHECKOUT_UNAVAILABLE", "message": "No matching in-stock product can be checked out.", "reasoning_steps": [_trace("Checkout Agent", "No catalog item resolved for checkout.", "STOP")]})
-        cart = Cart(user_id=ev.user_id)
-        cart.items.append(CartItem(product_id=product.id, name=product.name, price=product.price, quantity=1, subtotal=product.price, category=product.category))
-        if ev.include_bundle:
-            bundle = read_tools.calculate_upsell_bundle(product.id)
-            companion = read_tools.get_product(bundle.complementary_product_id) if bundle else None
-            if bundle and companion:
-                cart.items.append(CartItem(product_id=companion.id, name=companion.name, price=companion.price, quantity=1, subtotal=companion.price, category=companion.category))
-                cart.applied_bundle = bundle
-        cart.recalculate()
-        return CheckoutCartEvent(cart=cart, user_id=ev.user_id, approval_token=ev.approval_token, idempotency_key=ev.idempotency_key,
-            reasoning_steps=[_trace("Checkout Agent", f"Built cart for {len(cart.items)} item(s), total ₹{cart.total_amount:,.2f}.", "BUILD_CART", tool_called="cart_builder")])
+            return StopEvent(result={
+                "type": "CHECKOUT_UNAVAILABLE",
+                "message": "No matching in-stock product could be resolved for checkout.",
+                "reasoning_steps": [_trace("Checkout Agent", "No catalog item resolved for checkout.", "STOP")]
+            })
+
+        cart = read_tools.build_cart(
+            user_id=ev.user_id,
+            items=[{"product_id": product.id, "quantity": 1, "include_bundle": ev.include_bundle}]
+        )
+
+        return CheckoutCartEvent(
+            cart=cart,
+            user_id=ev.user_id,
+            approval_token=ev.approval_token,
+            idempotency_key=ev.idempotency_key,
+            force_fail_payment=ev.force_fail_payment,
+            reasoning_steps=[_trace("Checkout Agent", f"Constructed server-side cart for {len(cart.items)} item(s), total ₹{cart.total_amount:,.2f}.", "BUILD_CART", tool_called="build_cart")]
+        )
 
     @step
     async def policy_agent(self, ctx: Context, ev: CheckoutCartEvent) -> StopEvent:
-        # The only step permitted to call privileged money tools.
-        result = money_tools.create_order_guarded(cart=ev.cart, user_id=ev.user_id, idempotency_key=ev.idempotency_key, approval_token=ev.approval_token)
+        start_t = time.perf_counter()
+        result = money_tools.create_order_guarded(
+            cart=ev.cart,
+            user_id=ev.user_id,
+            idempotency_key=ev.idempotency_key,
+            approval_token=ev.approval_token
+        )
+        latency = (time.perf_counter() - start_t) * 1000.0
+
         trace = ev.reasoning_steps
         if result["success"]:
-            trace.append(_trace("Guardrail & Policy Agent", "Deterministic policy approved order creation.", "APPROVE", tool_called="create_order"))
-            return StopEvent(result={"type": "ORDER_CREATED", "message": f"Order {result['order']['order_id']} created for ₹{ev.cart.total_amount:,.2f}. Await payment and webhook verification.", "order": result["order"], "cart": ev.cart.model_dump(), "policy_evaluation": result["policy_evaluation"], "reasoning_steps": trace})
+            trace.append(_trace("Guardrail & Policy Agent", "Deterministic policy approved order creation.", "APPROVE", latency_ms=latency, tool_called="create_order"))
+            return StopEvent(result={
+                "type": "ORDER_CREATED",
+                "message": f"Order {result['order']['order_id']} created for ₹{ev.cart.total_amount:,.2f}. Awaiting payment initiation and webhook confirmation.",
+                "order": result["order"],
+                "cart": ev.cart.model_dump(),
+                "policy_evaluation": result["policy_evaluation"],
+                "reasoning_steps": trace
+            })
+
         if result.get("requires_approval"):
-            trace.append(_trace("Guardrail & Policy Agent", result["reason"], "GATED_APPROVAL_REQUIRED"))
-            return StopEvent(result={"type": "APPROVAL_REQUIRED", "message": result["reason"], "approval_token": result.get("approval_token"), "cart": ev.cart.model_dump(), "policy_evaluation": result["policy_evaluation"], "reasoning_steps": trace})
-        trace.append(_trace("Guardrail & Policy Agent", result["reason"], "DENY"))
-        return StopEvent(result={"type": "GUARDRAIL_DENIED", "message": f"Transaction blocked: {result['reason']}", "decision_code": result["decision_code"].value, "cart": ev.cart.model_dump(), "policy_evaluation": result["policy_evaluation"], "reasoning_steps": trace})
+            trace.append(_trace("Guardrail & Policy Agent", result["reason"], "GATED_APPROVAL_REQUIRED", latency_ms=latency))
+            return StopEvent(result={
+                "type": "APPROVAL_REQUIRED",
+                "message": result["reason"],
+                "approval_token": result.get("approval_token"),
+                "cart": ev.cart.model_dump(),
+                "policy_evaluation": result["policy_evaluation"],
+                "reasoning_steps": trace
+            })
+
+        trace.append(_trace("Guardrail & Policy Agent", result["reason"], "DENY", latency_ms=latency))
+        return StopEvent(result={
+            "type": "GUARDRAIL_DENIED",
+            "message": f"Transaction blocked by deterministic policy: {result['reason']}",
+            "decision_code": result["decision_code"].value,
+            "cart": ev.cart.model_dump(),
+            "policy_evaluation": result["policy_evaluation"],
+            "reasoning_steps": trace
+        })
+
+    @step
+    async def refund_agent(self, ctx: Context, ev: RefundRequestEvent) -> StopEvent:
+        amt = ev.refund_amount or 0.0
+        res = money_tools.issue_refund_guarded(
+            payment_id=ev.payment_id,
+            amount_inr=amt,
+            user_id=ev.user_id,
+            reason=ev.reason
+        )
+        if res.get("success"):
+            return StopEvent(result={
+                "type": "REFUND_PROCESSED",
+                "message": f"Refund of ₹{amt:,.2f} processed for payment {ev.payment_id}.",
+                "refund": res.get("refund")
+            })
+        else:
+            return StopEvent(result={
+                "type": "REFUND_DENIED",
+                "message": f"Refund blocked: {res.get('error')}",
+                "decision_code": res.get("decision_code")
+            })
+
+    @step
+    async def status_agent(self, ctx: Context, ev: StatusQueryEvent) -> StopEvent:
+        if ev.query_type == "ORDER":
+            order = read_tools.get_order_status(ev.entity_id)
+            if order:
+                return StopEvent(result={
+                    "type": "ORDER_STATUS",
+                    "message": f"Order {ev.entity_id} status: {order.get('status')} (State: {order.get('state')}) for ₹{order.get('amount'):,.2f}.",
+                    "order": order
+                })
+        else:
+            payment = read_tools.get_payment_status(ev.entity_id)
+            if payment:
+                return StopEvent(result={
+                    "type": "PAYMENT_STATUS",
+                    "message": f"Payment {ev.entity_id} status: {payment.get('status')} for ₹{payment.get('amount'):,.2f}.",
+                    "payment": payment
+                })
+
+        return StopEvent(result={
+            "type": "STATUS_NOT_FOUND",
+            "message": f"{ev.query_type} record '{ev.entity_id}' not found."
+        })
 
 
 commerce_workflow = AgenticCommerceWorkflow()

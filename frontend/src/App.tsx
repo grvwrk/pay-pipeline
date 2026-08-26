@@ -23,7 +23,7 @@ export const App: React.FC = () => {
     max_item_quantity: 5,
     allowed_currency: "INR",
     allowed_categories: ["mechanical_keyboards", "computer_peripherals", "workspace_accessories", "developer_gear", "ergonomics", "audio_equipment"],
-    merchant_whitelist: ["merch_aeropay_electronics_01"]
+    merchant_whitelist: ["merch_pay_pipeline_01"]
   });
 
   const [merchantData, setMerchantData] = useState<{

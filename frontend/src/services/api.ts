@@ -37,6 +37,12 @@ export const api = {
     return res.json();
   },
 
+  getCheckoutConfig: async () => {
+    const res = await fetch(`${BASE_URL}/payments/checkout-config`);
+    if (!res.ok) throw new Error(await res.text());
+    return res.json();
+  },
+
   // ACP Machine Discovery & Quote
   getACPCatalog: async () => {
     const res = await fetch(`${BASE_URL}/acp/catalog`);

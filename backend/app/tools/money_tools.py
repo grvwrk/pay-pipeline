@@ -1,14 +1,22 @@
 from typing import Optional, Dict, Any
 from backend.app.models.cart import Cart
 from backend.app.config import settings
-from backend.app.models.order import RazorpayOrder, PaymentCaptureResult, RefundResult
+from backend.app.models.order import RazorpayOrder, PaymentCaptureResult, RefundResult, TransactionState
 from backend.app.guardrails.policy_engine import policy_engine
 from backend.app.guardrails.idempotency import idempotency_manager
 from backend.app.guardrails.spend_limiter import spend_limiter
 from backend.app.payment.razorpay_client import razorpay_client
 from backend.app.audit.audit_service import audit_service
+from backend.app.tools.dispatcher import tool_dispatcher, ToolRiskLevel
+from backend.app.database.repositories import payment_repo, order_repo, cart_repo
+
 
 class PrivilegedMoneyTools:
+    """
+    Privileged Money-Moving Tools (Class B - High Risk).
+    Every execution must pass through deterministic policy evaluation and record to the cryptographic audit ledger.
+    """
+
     @classmethod
     def create_order_guarded(
         cls,
@@ -29,7 +37,7 @@ class PrivilegedMoneyTools:
                 actor_id=user_id,
                 actor_role="CHECKOUT_AGENT",
                 action="CREATE_ORDER_DENIED",
-                arguments={"cart_id": cart.cart_id, "amount": cart.total_amount, "decision_code": policy_res.decision_code},
+                arguments={"cart_id": cart.cart_id, "amount": cart.total_amount, "decision_code": policy_res.decision_code.value},
                 guardrail_decision=policy_res.decision_code.value,
                 approval_required=policy_res.requires_human_approval,
                 result_status="DENIED",
@@ -43,6 +51,9 @@ class PrivilegedMoneyTools:
                 "approval_token": policy_res.approval_token,
                 "policy_evaluation": policy_res.model_dump()
             }
+
+        # Save the cart to DB
+        cart_repo.save_cart(cart)
 
         order = razorpay_client.create_order(
             amount_inr=cart.total_amount,
@@ -80,8 +91,17 @@ class PrivilegedMoneyTools:
         method: str = "upi",
         force_fail: bool = False
     ) -> Dict[str, Any]:
+        order = order_repo.get_order(order_id)
+        if not order:
+            err = f"Order {order_id} not found."
+            return {"success": False, "error": err}
+
+        if amount_inr != order.amount:
+            err = f"Payment amount ₹{amount_inr:,.2f} does not match authorized order amount ₹{order.amount:,.2f}."
+            return {"success": False, "error": err}
+
         res = razorpay_client.simulate_payment_capture(order_id, amount_inr, method, force_fail)
-        
+
         if res.status == "captured":
             audit_service.record_event(
                 actor_id=user_id,
@@ -116,8 +136,31 @@ class PrivilegedMoneyTools:
         user_id: str = "user_default_buyer",
         reason: str = "Customer request"
     ) -> Dict[str, Any]:
+        allowed, policy_reason, decision_code = policy_engine.evaluate_refund(
+            payment_id=payment_id,
+            refund_amount=amount_inr,
+            user_id=user_id
+        )
+
+        if not allowed:
+            audit_service.record_event(
+                actor_id=user_id,
+                actor_role="CHECKOUT_AGENT",
+                action="ISSUE_REFUND_DENIED",
+                tool_name="issue_refund",
+                arguments={"payment_id": payment_id, "amount": amount_inr, "reason": reason, "decision_code": decision_code},
+                guardrail_decision="DENIED",
+                result_status="DENIED",
+                explainability_notes=f"Refund denied: {policy_reason}"
+            )
+            return {
+                "success": False,
+                "decision_code": decision_code,
+                "error": policy_reason
+            }
+
         try:
-            refund = razorpay_client.process_refund(payment_id, amount_inr, reason)
+            refund = razorpay_client.process_refund(payment_id, amount_inr, reason, user_id=user_id)
             audit_service.record_event(
                 actor_id=user_id,
                 actor_role="CHECKOUT_AGENT",
@@ -133,13 +176,44 @@ class PrivilegedMoneyTools:
             audit_service.record_event(
                 actor_id=user_id,
                 actor_role="CHECKOUT_AGENT",
-                action="ISSUE_REFUND_DENIED",
+                action="ISSUE_REFUND_FAILED",
                 tool_name="issue_refund",
                 arguments={"payment_id": payment_id, "amount": amount_inr, "error": str(e)},
-                guardrail_decision="DENIED",
-                result_status="DENIED",
-                explainability_notes=f"Refund denied: {str(e)}"
+                guardrail_decision="ERROR",
+                result_status="FAILED",
+                explainability_notes=f"Refund error: {str(e)}"
             )
             return {"success": False, "error": str(e)}
 
+    @classmethod
+    def cancel_payment(
+        cls,
+        payment_id: str,
+        reason: str = "User cancelled",
+        user_id: str = "user_default_buyer"
+    ) -> Dict[str, Any]:
+        payment = payment_repo.get_payment(payment_id)
+        if not payment:
+            return {"success": False, "error": f"Payment {payment_id} not found."}
+
+        payment_repo.update_status(payment_id, "cancelled", error_code="CANCELLED_BY_USER", error_desc=reason)
+        audit_service.record_event(
+            actor_id=user_id,
+            actor_role="CHECKOUT_AGENT",
+            action="PAYMENT_CANCELLED",
+            tool_name="cancel_payment",
+            arguments={"payment_id": payment_id, "reason": reason},
+            guardrail_decision="APPROVED",
+            result_status="CANCELLED",
+            explainability_notes=f"Payment {payment_id} cancelled by user: {reason}"
+        )
+        return {"success": True, "message": f"Payment {payment_id} cancelled."}
+
+
 money_tools = PrivilegedMoneyTools()
+
+# Register money tools with ToolDispatcher
+tool_dispatcher.register_tool("create_order", "Create guarded Razorpay test order from cart", ToolRiskLevel.HIGH, money_tools.create_order_guarded, requires_guardrail=True)
+tool_dispatcher.register_tool("capture_payment", "Initiate and capture payment on Razorpay rails", ToolRiskLevel.HIGH, money_tools.capture_payment_guarded, requires_guardrail=True)
+tool_dispatcher.register_tool("issue_refund", "Process refund bounded by original payment amount", ToolRiskLevel.HIGH, money_tools.issue_refund_guarded, requires_guardrail=True)
+tool_dispatcher.register_tool("cancel_payment", "Cancel pending payment transaction", ToolRiskLevel.HIGH, money_tools.cancel_payment, requires_guardrail=True)

@@ -1,23 +1,15 @@
-from typing import Dict, Optional, Any
-import datetime
+from typing import Optional, Dict, Any
+from backend.app.database.repositories import idempotency_repo
+
 
 class IdempotencyManager:
-    def __init__(self):
-        self._cache: Dict[str, Dict[str, Any]] = {}
+    """Manages transactional idempotency keys persisted in SQLite."""
 
-    def check_key(self, idempotency_key: str) -> Optional[Dict[str, Any]]:
-        if not idempotency_key:
-            return None
-        return self._cache.get(idempotency_key)
+    def check_key(self, key: str) -> Optional[Dict[str, Any]]:
+        return idempotency_repo.check_key(key)
 
-    def register_key(self, idempotency_key: str, result: Dict[str, Any]):
-        if idempotency_key:
-            self._cache[idempotency_key] = {
-                "result": result,
-                "timestamp": datetime.datetime.utcnow().isoformat() + "Z"
-            }
+    def register_key(self, key: str, response_payload: Dict[str, Any]):
+        idempotency_repo.register_key(key, response_payload)
 
-    def clear(self):
-        self._cache.clear()
 
 idempotency_manager = IdempotencyManager()

@@ -51,4 +51,4 @@ class GuardrailConfig(BaseModel):
         "running_shoes",
         "health_and_groceries"
     ]
-    merchant_whitelist: List[str] = ["merch_aeropay_electronics_01"]
+    merchant_whitelist: List[str] = ["merch_pay_pipeline_01"]

@@ -12,7 +12,7 @@ export const ChatInterface: React.FC = () => {
     {
       id: "msg_init_1",
       sender: "agent",
-      text: "Hello! I am your **AeroPay Agentic Commerce Assistant** powered by a Multi-Agent LlamaIndex Orchestrator.\n\nTell me what you're looking for (e.g. *'best available peanut butter with highest protein % under 700rs'* or *'Buy Keychron K2 mechanical keyboard'*).",
+      text: "Hello! I am your **pay-pipeline Agentic Commerce Assistant** powered by a Multi-Agent LlamaIndex Orchestrator.\n\nTell me what you're looking for (e.g. *'best available peanut butter with highest protein % under 700rs'* or *'Buy Keychron K2 mechanical keyboard'*).",
       timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
     }
   ]);

@@ -17,6 +17,7 @@ from backend.app.tools.read_tools import read_tools
 from backend.app.tools.money_tools import money_tools
 from backend.app.guardrails.policy_engine import policy_engine
 from backend.app.audit.audit_service import audit_service
+from backend.app.database.repositories import audit_repo
 
 router = APIRouter(prefix="/acp", tags=["Agentic Commerce Protocol (Machine-to-Machine)"])
 
@@ -130,7 +131,7 @@ def execute_acp_checkout(req: ACPCheckoutRequest):
         idempotency_key=req.idempotency_key
     )
 
-    latest_audit = audit_service.chain[-1]
+    latest_audit = audit_repo.get_latest()
 
     if not order_res["success"]:
         return ACPCheckoutResponse(
@@ -162,7 +163,7 @@ def get_mcp_tool_definitions():
         "tools": [
             {
                 "name": "search_merchant_catalog",
-                "description": "Look up machine-readable products, prices, and stock in AeroPay merchant catalog.",
+                "description": "Look up machine-readable products, prices, and stock in pay-pipeline merchant catalog.",
                 "parameters": {
                     "type": "object",
                     "properties": {
