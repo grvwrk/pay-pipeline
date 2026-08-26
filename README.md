@@ -1,10 +1,8 @@
 ﻿# pay-pipeline
 
-two problems, one system: grow a merchant's revenue, and make that merchant something an ai buyer can actually transact with.
+an agent system built on razorpay test-mode apis, built to do two things: grow a merchant's revenue, and make that merchant transactable by an ai buyer end to end.
 
-1. **revenue growth** — intent classification, product affinity matching, bundle discounts, campaign orchestration.
-2. **ai transactability** — machine-readable catalog schema, acp/ap2 endpoints, mcp tool integration.
-3. **the bar** — explainable, bounded, gated. hard spend cap (₹5,000/txn), inr only, quantity caps, human approval gate above ₹3,000, sha-256 hash-chained audit log.
+every money-moving action passes through a guardrail before it reaches razorpay — bounded by configurable limits, gated behind approval where required, and logged into a tamper-evident audit trail. nothing executes because a model decided to.
 
 ---
 
@@ -18,7 +16,7 @@ flowchart TD
         MerchantAdmin["Merchant Dashboard (Growth & Campaigns)"]
     end
 
-    subgraph Orchestrator_Layer ["Multi-Agent Orchestrator (LlamaIndex Workflow)"]
+    subgraph Orchestrator_Layer ["Multi-Agent Orchestrator"]
         IntentRouter["Intent Router Step"]
         CatalogAgent["Catalog Agent Step"]
         UpsellAgent["Upsell & Cross-Sell Agent Step"]
@@ -27,26 +25,26 @@ flowchart TD
 
     subgraph Security_Layer ["Deterministic Guardrail & Policy Engine"]
         GuardrailEngine["Policy Engine (Model-Independent)"]
-        RuleSpendLimit["Spend Limits (Max ₹5,000)"]
+        RuleSpendLimit["Configurable Spend Limit"]
         RuleCurrency["Currency Check (INR)"]
-        RuleApproval["Gated Human 2FA (> ₹3,000)"]
-        RuleIdempotency["Strict Idempotency Keys"]
+        RuleApproval["Configurable Approval Gate"]
+        RuleIdempotency["Idempotency Keys"]
     end
 
     subgraph Tool_Layer ["Separated Capability Tool Layer"]
-        ReadTools["Read & Decision Tools (catalog_lookup, calculate_bundle)"]
-        MoneyTools["Privileged Money Tools (create_order, capture_payment)"]
+        ReadTools["Read & Decision Tools"]
+        MoneyTools["Privileged Money Tools"]
     end
 
     subgraph Payment_Layer ["Razorpay Rail & State Machine"]
         RazorpayClient["Razorpay Test API Client"]
-        WebhookReceiver["Authoritative Webhook Receiver (HMAC-SHA256)"]
+        WebhookReceiver["Authoritative Webhook Receiver"]
         TxnStateMachine["Transaction State Machine"]
     end
 
     subgraph Audit_Layer ["Cryptographic Audit & Explainability"]
-        HashChain["SHA-256 Hash Chain"]
-        HMACSig["HMAC-SHA256 Digital Signatures"]
+        HashChain["Hash Chain"]
+        HMACSig["Digital Signatures"]
     end
 
     HumanBuyer --> IntentRouter
@@ -76,67 +74,22 @@ flowchart TD
 
 ---
 
-## what's actually in it
+## implementation
+
+### client layer
+human buyers, external ai buyers over acp/mcp, and the merchant dashboard all enter through the same intent router — one entry point regardless of who's asking.
 
 ### orchestrator
-event-driven workflow on `llama-index-core` (`Workflow`, `Event`, `step`, `Context`, `StartEvent`, `StopEvent`). four typed steps: intent router, catalog, upsell, checkout. with `LLM_PROVIDER=groq`, the catalog agent uses groq function-calling (`openai/gpt-oss-20b`) with one allowlisted tool: `search_catalog`. no llm-backed step has money-tool access.
+an event-driven workflow splits every incoming request into typed steps: intent routing, catalog lookup, upsell/cross-sell, checkout. none of these steps holds access to a money tool directly — they can only reach the guardrail.
 
-### revenue engine
-upsell agent matches high-affinity products (keyboard + wrist rest, that kind of pairing) and applies a bounded 5% bundle discount. measured +40.6% aov increase in testing. campaign orchestrator on the merchant dashboard for segment-based pushes.
+### guardrail & policy engine
+sits between the orchestrator and the money tools, independent of any model. checks spend limits, currency, approval requirements, and idempotency before anything is allowed through. limits are configurable, not hardcoded — set by the merchant, not baked into the code.
 
-### guardrails
-deterministic, model-independent. lives outside the llm entirely.
-- ₹5,000 hard cap per transaction, ₹15,000 session ceiling
-- inr only
-- human 2fa gate above ₹3,000
-- idempotency keys, no duplicate charges on retry
+### tool layer
+split by privilege. read/decision tools handle catalog and bundling logic and never touch money. money tools create orders and capture payments, and only unlock once the guardrail approves the request.
 
-### payments
-razorpay test-mode. local simulator by default, including a forced-decline path for the failure demo. set `PAYMENT_PROVIDER_MODE=razorpay` with real test creds to hit actual razorpay checkout — secret never leaves the server. webhook signature verified (`X-Razorpay-Signature`, hmac-sha256). orders sit `PENDING` until the webhook confirms — nothing marks itself complete on its own say-so.
+### payment layer
+a razorpay test-mode client paired with an authoritative webhook receiver. an order stays pending until the webhook confirms it — the system never marks a payment complete on its own.
 
-### audit trail
-every prompt, agent decision, guardrail check, and payment event gets sha-256 chained and hmac-signed. one-click chain verification. a tamper simulator to prove the chain actually catches an edit.
-
-### acp / mcp
-`/api/v1/acp/catalog`, `/api/v1/acp/quote`, `/api/v1/acp/checkout`, `/api/v1/acp/mcp-schema` — a storefront a machine can buy from without a human in the loop.
-
----
-
-## tests
-
-```bash
-pytest
-```
-covers guardrails, audit chain integrity, webhooks, workflows.
-
----
-
-## running it
-
-no secrets in the repo. `PAYMENT_PROVIDER_MODE=simulator` by default — safe to run local, no keys needed.
-
-for a real razorpay-backed run: `RAZORPAY_KEY_ID`, `RAZORPAY_KEY_SECRET`, `RAZORPAY_WEBHOOK_SECRET`, `AUDIT_HMAC_SECRET` — via env, never committed.
-
-for model-backed agents: copy `.env.example`, set `LLM_PROVIDER=groq`, add `GROQ_API_KEY`, then
-
-```bash
-pip install -r requirements.txt
-```
-
-default `LLM_PROVIDER=deterministic` — offline, used for tests. `ENABLE_GROQ_BROWSER_SEARCH=true` only if you actually want that tool live — it never touches catalog prices or inventory either way.
-
-**backend**
-```bash
-python -m uvicorn backend.app.main:app --host 0.0.0.0 --port 8000 --reload
-```
-
-**frontend**
-```bash
-cd frontend
-npm install
-npm run dev
-```
-
-- app — localhost:5173
-- api docs — localhost:8000/docs
-- health — localhost:8000/health
+### audit layer
+every decision, guardrail check, and payment event gets hash-chained and signed. tampering is detectable, and every action taken by the system can be traced back to why it happened.
