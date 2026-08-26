@@ -1,6 +1,6 @@
 import uuid
 from fastapi import APIRouter, HTTPException, Header
-from typing import Optional
+from typing import Optional, Dict
 from backend.app.config import settings
 from backend.app.models.acp import (
     ACPDiscoveryResponse,
@@ -17,6 +17,9 @@ from backend.app.guardrails.policy_engine import policy_engine
 from backend.app.audit.audit_service import audit_service
 
 router = APIRouter(prefix="/acp", tags=["Agentic Commerce Protocol (Machine-to-Machine)"])
+
+# In-memory quote cache for machine-to-machine transactions
+_quotes_db: Dict[str, Cart] = {}
 
 @router.get("/catalog", response_model=ACPDiscoveryResponse)
 def get_machine_catalog():
@@ -55,12 +58,12 @@ def get_machine_catalog():
 
 @router.post("/quote", response_model=ACPQuoteResponse)
 def get_quote(req: ACPQuoteRequest):
-    """Machine-readable quote and bundle pricing calculator."""
+    """Machine-readable quote and dynamic bundle pricing calculator."""
     cart = Cart(user_id=req.agent_id)
     for i, sku in enumerate(req.skus):
         p = read_tools.get_product(sku)
         if not p:
-            raise HTTPException(status_code=404, detail=f"SKU {sku} not found")
+            raise HTTPException(status_code=404, detail=f"SKU {sku} not found in catalog")
         qty = req.quantities[i] if i < len(req.quantities) else 1
         cart.items.append(CartItem(
             product_id=p.id,
@@ -88,8 +91,11 @@ def get_quote(req: ACPQuoteRequest):
     cart.recalculate()
     policy_res = policy_engine.evaluate(cart=cart, user_id=req.agent_id)
 
+    quote_id = f"quote_{uuid.uuid4().hex[:10]}"
+    _quotes_db[quote_id] = cart
+
     return ACPQuoteResponse(
-        quote_id=f"quote_{uuid.uuid4().hex[:10]}",
+        quote_id=quote_id,
         skus=[item.product_id for item in cart.items],
         subtotal=cart.subtotal,
         bundle_discount=cart.discount_amount,
@@ -101,18 +107,24 @@ def get_quote(req: ACPQuoteRequest):
 
 @router.post("/checkout", response_model=ACPCheckoutResponse)
 def execute_acp_checkout(req: ACPCheckoutRequest):
-    """Programmatic transaction endpoint for external AI buyers."""
-    cart = Cart(user_id=req.buyer_agent_id)
-    # Default to popular item for test quote checkout
-    p = read_tools.get_product("sku_kb_keychron_k2") or read_tools.catalog[0]
-    cart.items.append(CartItem(
-        product_id=p.id,
-        name=p.name,
-        price=p.price,
-        subtotal=p.price,
-        category=p.category
-    ))
-    cart.recalculate()
+    """Programmatic transaction endpoint for external AI buyers using quoted items."""
+    if req.quote_id in _quotes_db:
+        cart = _quotes_db[req.quote_id]
+        cart.user_id = req.buyer_agent_id
+    else:
+        # Construct cart from first matching or default catalog item
+        cart = Cart(user_id=req.buyer_agent_id)
+        p = read_tools.catalog[0] if read_tools.catalog else None
+        if not p:
+            raise HTTPException(status_code=500, detail="Catalog is empty")
+        cart.items.append(CartItem(
+            product_id=p.id,
+            name=p.name,
+            price=p.price,
+            subtotal=p.price,
+            category=p.category
+        ))
+        cart.recalculate()
 
     order_res = money_tools.create_order_guarded(
         cart=cart,
@@ -120,13 +132,15 @@ def execute_acp_checkout(req: ACPCheckoutRequest):
         idempotency_key=req.idempotency_key
     )
 
+    latest_audit = audit_service.chain[-1]
+
     if not order_res["success"]:
         return ACPCheckoutResponse(
             status="DENIED",
             amount=cart.total_amount,
             currency="INR",
-            audit_event_id=audit_service.chain[-1].event_id,
-            signature=audit_service.chain[-1].signature,
+            audit_event_id=latest_audit.event_id,
+            signature=latest_audit.signature,
             message=f"Order rejected by policy: {order_res['reason']}"
         )
 
@@ -137,8 +151,8 @@ def execute_acp_checkout(req: ACPCheckoutRequest):
         amount=order["amount"],
         currency=order["currency"],
         razorpay_payment_link=f"https://rzp.io/i/{order['order_id']}",
-        audit_event_id=audit_service.chain[-1].event_id,
-        signature=audit_service.chain[-1].signature,
+        audit_event_id=latest_audit.event_id,
+        signature=latest_audit.signature,
         message="Machine-to-machine checkout successfully authorized and order created."
     )
 

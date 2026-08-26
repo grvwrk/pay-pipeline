@@ -39,6 +39,8 @@ class GuardrailConfig(BaseModel):
     max_item_quantity: int = 5
     allowed_currency: str = "INR"
     allowed_categories: List[str] = [
+        "smartphones",
+        "mobile_accessories",
         "mechanical_keyboards",
         "computer_peripherals",
         "workspace_accessories",

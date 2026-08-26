@@ -40,7 +40,7 @@ class PrivilegedMoneyTools:
                 "reason": policy_res.reason,
                 "requires_approval": policy_res.requires_human_approval,
                 "approval_token": policy_res.approval_token,
-                "policy_evaluation": policy_res.dict()
+                "policy_evaluation": policy_res.model_dump()
             }
 
         order = razorpay_client.create_order(
@@ -51,7 +51,7 @@ class PrivilegedMoneyTools:
         )
 
         if idempotency_key:
-            idempotency_manager.register_key(idempotency_key, order.dict())
+            idempotency_manager.register_key(idempotency_key, order.model_dump())
 
         audit_service.record_event(
             actor_id=user_id,
@@ -66,8 +66,8 @@ class PrivilegedMoneyTools:
 
         return {
             "success": True,
-            "order": order.dict(),
-            "policy_evaluation": policy_res.dict()
+            "order": order.model_dump(),
+            "policy_evaluation": policy_res.model_dump()
         }
 
     @classmethod
@@ -93,7 +93,7 @@ class PrivilegedMoneyTools:
                 result_status="SUCCESS",
                 explainability_notes=f"Payment {res.payment_id} successfully captured on Razorpay test rails."
             )
-            return {"success": True, "payment": res.dict()}
+            return {"success": True, "payment": res.model_dump()}
         else:
             audit_service.record_event(
                 actor_id=user_id,
@@ -105,7 +105,7 @@ class PrivilegedMoneyTools:
                 result_status="FAILED",
                 explainability_notes=f"Payment attempt for order {order_id} failed: {res.error_description}"
             )
-            return {"success": False, "payment": res.dict(), "error": res.error_description}
+            return {"success": False, "payment": res.model_dump(), "error": res.error_description}
 
     @classmethod
     def issue_refund_guarded(
@@ -127,7 +127,7 @@ class PrivilegedMoneyTools:
                 result_status="SUCCESS",
                 explainability_notes=f"Refund {refund.refund_id} processed for ₹{amount_inr:,.2f}."
             )
-            return {"success": True, "refund": refund.dict()}
+            return {"success": True, "refund": refund.model_dump()}
         except Exception as e:
             audit_service.record_event(
                 actor_id=user_id,

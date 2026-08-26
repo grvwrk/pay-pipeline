@@ -1,15 +1,23 @@
 import json
+from pathlib import Path
 from fastapi import APIRouter
 from backend.app.models.campaign import Campaign, CustomerSegment
 from backend.app.tools.read_tools import read_tools
 
 router = APIRouter(prefix="/merchant", tags=["Merchant Revenue Growth & Campaigns"])
 
+CAMPAIGNS_FILE_PATH = Path(__file__).parent.parent / "data" / "campaigns_db.json"
+
+def _load_campaigns_db():
+    if CAMPAIGNS_FILE_PATH.exists():
+        with open(CAMPAIGNS_FILE_PATH, "r", encoding="utf-8") as f:
+            return json.load(f)
+    return {"segments": [], "campaigns": []}
+
 @router.get("/analytics")
 def get_merchant_analytics():
     """Merchant Growth KPIs: AOV, Upsell conversion lift, total revenue, cart recovery."""
-    with open("backend/app/data/campaigns_db.json", "r", encoding="utf-8") as f:
-        campaigns_db = json.load(f)
+    campaigns_db = _load_campaigns_db()
 
     # Calculate real-time metrics
     baseline_aov = 3200.0  # without AI agent
@@ -34,11 +42,10 @@ def get_merchant_analytics():
 @router.post("/campaigns")
 def create_campaign(campaign: Campaign):
     """Launch bounded revenue growth campaign."""
-    with open("backend/app/data/campaigns_db.json", "r", encoding="utf-8") as f:
-        campaigns_db = json.load(f)
-
-    campaigns_db.setdefault("campaigns", []).append(campaign.dict())
-    with open("backend/app/data/campaigns_db.json", "w", encoding="utf-8") as f:
+    campaigns_db = _load_campaigns_db()
+    campaigns_db.setdefault("campaigns", []).append(campaign.model_dump())
+    
+    with open(CAMPAIGNS_FILE_PATH, "w", encoding="utf-8") as f:
         json.dump(campaigns_db, f, indent=2)
 
     return {"status": "SUCCESS", "message": f"Campaign '{campaign.title}' activated with bounded budget ₹{campaign.max_budget_inr:,.2f}."}

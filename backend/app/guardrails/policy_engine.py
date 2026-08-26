@@ -118,8 +118,55 @@ class DeterministicPolicyEngine:
                 bounded_amount=amount,
                 max_allowed_amount=self.config.max_transaction_amount_inr
             )
+        rule_evaluations.append(PolicyRuleEvaluation(
+            rule_name="merchant_whitelist",
+            passed=True,
+            description="Merchant is verified in whitelist.",
+            threshold_value=self.config.merchant_whitelist,
+            actual_value=merchant_id
+        ))
 
-        # Rule 4: Hard Single-Transaction Spend Limit
+        # Rule 4: Category Whitelist
+        for item in cart.items:
+            if item.category and item.category not in self.config.allowed_categories:
+                rule_evaluations.append(PolicyRuleEvaluation(
+                    rule_name="category_whitelist",
+                    passed=False,
+                    description=f"Product '{item.name}' belongs to unauthorized category '{item.category}'.",
+                    threshold_value=self.config.allowed_categories,
+                    actual_value=item.category
+                ))
+                return PolicyEvaluationResult(
+                    allowed=False,
+                    decision_code=DecisionCode.DENIED_UNAUTHORIZED_CATEGORY,
+                    reason=f"Category '{item.category}' is not authorized.",
+                    requires_human_approval=False,
+                    rule_evaluations=rule_evaluations,
+                    bounded_amount=amount,
+                    max_allowed_amount=self.config.max_transaction_amount_inr
+                )
+
+        # Rule 5: Max Item Quantity Cap
+        for item in cart.items:
+            if item.quantity > self.config.max_item_quantity:
+                rule_evaluations.append(PolicyRuleEvaluation(
+                    rule_name="quantity_cap",
+                    passed=False,
+                    description=f"Item quantity {item.quantity} exceeds maximum allowed {self.config.max_item_quantity}.",
+                    threshold_value=self.config.max_item_quantity,
+                    actual_value=item.quantity
+                ))
+                return PolicyEvaluationResult(
+                    allowed=False,
+                    decision_code=DecisionCode.DENIED_QUANTITY_EXCEEDED,
+                    reason=f"Item quantity {item.quantity} exceeds limit of {self.config.max_item_quantity}.",
+                    requires_human_approval=False,
+                    rule_evaluations=rule_evaluations,
+                    bounded_amount=amount,
+                    max_allowed_amount=self.config.max_transaction_amount_inr
+                )
+
+        # Rule 6: Hard Single-Transaction Spend Limit
         if amount > self.config.max_transaction_amount_inr:
             rule_evaluations.append(PolicyRuleEvaluation(
                 rule_name="max_transaction_amount_limit",
@@ -145,7 +192,7 @@ class DeterministicPolicyEngine:
             actual_value=amount
         ))
 
-        # Rule 5: Cumulative Spend Limit
+        # Rule 7: Cumulative Spend Limit
         current_cum = spend_limiter.get_user_cumulative_spend(user_id)
         if current_cum + amount > self.config.max_cumulative_spend_inr:
             rule_evaluations.append(PolicyRuleEvaluation(
@@ -165,7 +212,7 @@ class DeterministicPolicyEngine:
                 max_allowed_amount=self.config.max_transaction_amount_inr
             )
 
-        # Rule 6: Gated Approval Threshold
+        # Rule 8: Gated Approval Threshold
         if amount > self.config.approval_threshold_inr:
             if provided_approval_token and self.verify_approval_token(provided_approval_token):
                 rule_evaluations.append(PolicyRuleEvaluation(

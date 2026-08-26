@@ -27,8 +27,8 @@ async def run_scenario(scenario_id: str):
 
     elif scenario_id == "upsell_basket_growth":
         # Scenario 2: Dynamic Upsell & Basket Expansion (Merchant Revenue Growth)
-        kb = read_tools.get_product("sku_kb_keychron_k2")
-        bundle = read_tools.calculate_upsell_bundle("sku_kb_keychron_k2")
+        kb = read_tools.get_product("sku_kb_keychron_k2") or read_tools.catalog[0]
+        bundle = read_tools.calculate_upsell_bundle(kb.id)
         cart = Cart(user_id="judge_evaluator_01")
         cart.items.append(CartItem(
             product_id=kb.id,
@@ -37,15 +37,17 @@ async def run_scenario(scenario_id: str):
             subtotal=kb.price,
             category=kb.category
         ))
-        comp = read_tools.get_product(bundle.complementary_product_id)
-        cart.items.append(CartItem(
-            product_id=comp.id,
-            name=comp.name,
-            price=comp.price,
-            subtotal=comp.price,
-            category=comp.category
-        ))
-        cart.applied_bundle = bundle
+        if bundle:
+            comp = read_tools.get_product(bundle.complementary_product_id)
+            if comp:
+                cart.items.append(CartItem(
+                    product_id=comp.id,
+                    name=comp.name,
+                    price=comp.price,
+                    subtotal=comp.price,
+                    category=comp.category
+                ))
+                cart.applied_bundle = bundle
         cart.recalculate()
 
         order_res = money_tools.create_order_guarded(cart, user_id="judge_evaluator_01")
@@ -53,13 +55,13 @@ async def run_scenario(scenario_id: str):
             "scenario": "Revenue Growth & Dynamic Upsell",
             "title": "AOV Expansion: Keyboard + Solid Walnut Rest Bundle",
             "description": "Upsell Agent pairs Keychron K2 with Solid Walnut Wrist Rest (₹499) + 5% discount -> Cart ₹4,998 (< ₹5,000 limit).",
-            "cart": cart.dict(),
+            "cart": cart.model_dump(),
             "order": order_res.get("order"),
             "policy_evaluation": order_res.get("policy_evaluation")
         }
 
     elif scenario_id == "graceful_failure_spend_limit":
-        # Scenario 3: Bounded Deterministic Guardrail Interception (₹8,000 keyboard with ₹5,000 limit)
+        # Scenario 3: Bounded Deterministic Guardrail Interception (₹7,999 keyboard with ₹5,000 limit)
         res = await commerce_workflow.run(
             user_message="Buy me the AeroPro CNC Anodized Aluminium Gasket Keyboard for ₹7999",
             user_id="judge_evaluator_01"
@@ -87,7 +89,7 @@ async def run_scenario(scenario_id: str):
     elif scenario_id == "graceful_failure_payment_decline":
         # Scenario 5: Graceful Payment Failure & Webhook Handling
         cart = Cart(user_id="judge_evaluator_01")
-        p = read_tools.get_product("sku_mouse_ergo_vertical")
+        p = read_tools.get_product("sku_mouse_ergo_vertical") or read_tools.catalog[0]
         cart.items.append(CartItem(
             product_id=p.id,
             name=p.name,
@@ -117,9 +119,8 @@ async def run_scenario(scenario_id: str):
 
     elif scenario_id == "acp_machine_buyer_transaction":
         # Scenario 6: External AI Buyer transacting via Agentic Commerce Protocol
-        quote_skus = ["sku_dev_screenbar_light"]
         cart = Cart(user_id="external_agent_claude_3")
-        p = read_tools.get_product("sku_dev_screenbar_light")
+        p = read_tools.get_product("sku_dev_screenbar_light") or read_tools.catalog[0]
         cart.items.append(CartItem(product_id=p.id, name=p.name, price=p.price, subtotal=p.price, category=p.category))
         cart.recalculate()
 
@@ -129,7 +130,7 @@ async def run_scenario(scenario_id: str):
             "title": "Machine-to-Machine Autonomous Purchase",
             "description": "External AI Buyer directly discovered, quoted, and checked out ScreenBar LED over ACP endpoints.",
             "order": order_res.get("order"),
-            "audit_proof": audit_service.chain[-1].dict()
+            "audit_proof": audit_service.chain[-1].model_dump()
         }
 
     return {"error": f"Unknown scenario {scenario_id}"}

@@ -1,75 +1,75 @@
-import json, re
+import json, re, os
+from pathlib import Path
 from typing import List, Optional, Dict, Any
 from backend.app.models.catalog import Product, ProductFilter
 from backend.app.models.cart import BundleOffer, Cart, CartItem
 
+CATALOG_FILE_PATH = Path(__file__).parent.parent / "data" / "catalog_db.json"
+
 class ReadAndDecisionTools:
     def __init__(self):
+        self.catalog: List[Product] = []
         self.reload_catalog()
 
     def reload_catalog(self):
-        with open("backend/app/data/catalog_db.json", "r", encoding="utf-8") as f:
-            data = json.load(f)
-            self.catalog = [Product(**item) for item in data]
+        if CATALOG_FILE_PATH.exists():
+            with open(CATALOG_FILE_PATH, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                self.catalog = [Product(**item) for item in data]
+        else:
+            self.catalog = []
 
     def catalog_lookup(self, filter_params: ProductFilter) -> List[Product]:
         self.reload_catalog()
         candidates = self.catalog
 
-        # 1. Hard constraint: In-stock
+        # 1. In-stock filter
         if filter_params.in_stock_only:
             candidates = [p for p in candidates if p.inventory > 0]
 
-        # 2. Hard constraint: Max Price
+        # 2. Max Price constraint
         if filter_params.max_price is not None and filter_params.max_price > 0:
             candidates = [p for p in candidates if p.price <= filter_params.max_price]
 
         # 3. Category Filter
         if filter_params.category:
-            cat_match = [p for p in candidates if p.category == filter_params.category]
-            if cat_match:
-                candidates = cat_match
+            cat_matches = [p for p in candidates if p.category.lower() == filter_params.category.lower()]
+            if cat_matches:
+                candidates = cat_matches
 
         # 4. Semantic Keyword Scoring
         if filter_params.query:
             raw_query = filter_params.query.lower()
-            # Remove filler words
-            stop_words = {"find", "me", "the", "best", "available", "good", "under", "below", "rs", "inr", "rupees", "for", "a", "an", "with", "around"}
+            stop_words = {
+                "find", "me", "the", "best", "available", "good", "under", "below",
+                "rs", "inr", "rupees", "for", "a", "an", "with", "around", "i", "need", "want", "show", "buy"
+            }
             tokens = [t for t in re.findall(r'[a-zA-Z0-9_.]+', raw_query) if t not in stop_words and len(t) > 1]
 
             scored_items = []
             for p in candidates:
                 score = 0
                 searchable_text = f"{p.name} {p.category} {' '.join(p.tags)} {' '.join(str(v) for v in p.specs.values())} {p.description}".lower()
-                
-                # Category bonus
-                if any(syn in raw_query for syn in ["phone", "smartphone", "mobile"]) and p.category == "smartphones":
-                    score += 50
-                if any(syn in raw_query for syn in ["keyboard", "typing"]) and p.category == "mechanical_keyboards":
-                    score += 50
-                if any(syn in raw_query for syn in ["mouse", "vertical", "wrist"]) and p.category in ["ergonomics", "workspace_accessories"]:
-                    score += 50
-                if any(syn in raw_query for syn in ["headphone", "audio", "anc", "sound"]) and p.category == "audio_equipment":
-                    score += 50
 
-                # Compact / Small screen bonus
-                if any(syn in raw_query for syn in ["small", "compact", "mini", "one hand", "small screen", "small display"]):
-                    if any(t in ["small_display", "compact_phone", "mini_phone", "5.9_inch", "5.4_inch", "6.1_inch"] for t in p.tags):
-                        score += 40
-
-                # Token frequency matching
+                # Dynamic token matching
                 for token in tokens:
                     if token in p.name.lower():
+                        score += 30
+                    if any(token == tag.lower() or token in tag.lower() for tag in p.tags):
                         score += 25
-                    if any(token in tag.lower() for tag in p.tags):
+                    if token in p.category.lower():
                         score += 20
                     if token in searchable_text:
                         score += 10
 
+                # Query phrase matching
+                if p.name.lower() in raw_query or any(tag.lower() in raw_query for tag in p.tags):
+                    score += 40
+
                 if score > 0 or not tokens:
                     scored_items.append((score, p))
 
-            scored_items.sort(key=lambda x: (x[0], x[1].rating), reverse=True)
+            scored_items.sort(key=lambda x: (x[0], x[1].rating, -x[1].price), reverse=True)
             return [item[1] for item in scored_items]
 
         return candidates

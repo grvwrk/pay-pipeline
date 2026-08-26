@@ -17,9 +17,9 @@ class Settings(BaseModel):
     AUDIT_HMAC_SECRET: str = os.getenv("AUDIT_HMAC_SECRET", "aeropay_cryptographic_audit_signing_key_402")
     
     # Deterministic Guardrail Defaults
-    DEFAULT_MAX_TXN_AMOUNT_INR: float = 60000.0   # Default transaction ceiling (supports smartphones & high-end workstations)
-    DEFAULT_MAX_CUMULATIVE_SPEND_INR: float = 150000.0
-    DEFAULT_APPROVAL_THRESHOLD_INR: float = 30000.0  # Orders > ₹30,000 require human-in-the-loop confirmation
+    DEFAULT_MAX_TXN_AMOUNT_INR: float = 5000.0      # Hard ceiling per single transaction
+    DEFAULT_MAX_CUMULATIVE_SPEND_INR: float = 15000.0 # Cumulative session ceiling
+    DEFAULT_APPROVAL_THRESHOLD_INR: float = 3000.0   # Orders > ₹3,000 require gated human confirmation
     DEFAULT_MAX_ITEM_QUANTITY: int = 5
     ALLOWED_CURRENCY: str = "INR"
     ALLOWED_CATEGORIES: List[str] = [

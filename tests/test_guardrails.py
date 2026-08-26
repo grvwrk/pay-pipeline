@@ -1,7 +1,9 @@
-import pytest
+import pytest, uuid
 from backend.app.models.cart import Cart, CartItem
 from backend.app.models.guardrail import DecisionCode, GuardrailConfig
 from backend.app.guardrails.policy_engine import DeterministicPolicyEngine
+from backend.app.guardrails.idempotency import idempotency_manager
+from backend.app.guardrails.spend_limiter import spend_limiter
 
 def test_guardrail_spend_limit_denial():
     engine = DeterministicPolicyEngine()
@@ -59,3 +61,37 @@ def test_guardrail_currency_check():
     res = engine.evaluate(cart)
     assert not res.allowed
     assert res.decision_code == DecisionCode.DENIED_CURRENCY_MISMATCH
+
+def test_guardrail_idempotency_collision():
+    engine = DeterministicPolicyEngine()
+    cart = Cart()
+    cart.items.append(CartItem(
+        product_id="sku_mouse_ergo_vertical",
+        name="Vertical Mouse",
+        price=1899.0,
+        subtotal=1899.0
+    ))
+    cart.recalculate()
+
+    test_key = f"idem_test_{uuid.uuid4().hex[:8]}"
+    idempotency_manager.register_key(test_key, {"order_id": "order_already_processed"})
+
+    res = engine.evaluate(cart, idempotency_key=test_key)
+    assert not res.allowed
+    assert res.decision_code == DecisionCode.DENIED_IDEMPOTENCY_COLLISION
+
+def test_guardrail_quantity_cap():
+    engine = DeterministicPolicyEngine()
+    cart = Cart()
+    cart.items.append(CartItem(
+        product_id="sku_acc_wrist_rest_walnut",
+        name="Wrist Rest",
+        price=499.0,
+        quantity=10, # Exceeds max quantity cap of 5
+        subtotal=4990.0
+    ))
+    cart.recalculate()
+
+    res = engine.evaluate(cart)
+    assert not res.allowed
+    assert res.decision_code == DecisionCode.DENIED_QUANTITY_EXCEEDED
