@@ -1,0 +1,70 @@
+{
+  "segments": [
+    {
+      "id": "seg_gamers_coders",
+      "name": "Mechanical Keyboard & Workstation Enthusiasts",
+      "description": "Buyers looking for tactile productivity gear, compact keyboards, and custom accessories.",
+      "affinity_categories": [
+        "mechanical_keyboards",
+        "workspace_accessories",
+        "developer_gear"
+      ],
+      "average_order_value": 4200.0,
+      "customer_count": 1420,
+      "upsell_propensity_score": 0.88
+    },
+    {
+      "id": "seg_ergonomic_focused",
+      "name": "Ergonomic Health & Posture Focused Buyers",
+      "description": "Professionals prioritizing wrist comfort, vertical ergonomics, and eye care.",
+      "affinity_categories": [
+        "ergonomics",
+        "workspace_accessories",
+        "developer_gear"
+      ],
+      "average_order_value": 2850.0,
+      "customer_count": 890,
+      "upsell_propensity_score": 0.76
+    },
+    {
+      "id": "seg_creators_audio",
+      "name": "Creators, Streamers & Audio Producers",
+      "description": "Buyers demanding high fidelity noise cancellation and acoustic workstation setups.",
+      "affinity_categories": [
+        "audio_equipment",
+        "workspace_accessories"
+      ],
+      "average_order_value": 3900.0,
+      "customer_count": 620,
+      "upsell_propensity_score": 0.81
+    }
+  ],
+  "campaigns": [
+    {
+      "id": "camp_kb_tactile_bundle",
+      "title": "Tactile Precision: Keyboard + Walnut Rest Bundle",
+      "target_segment": "seg_gamers_coders",
+      "trigger_condition": "When user adds mechanical keyboard to cart",
+      "bundle_offer": "Get Solid Walnut Wrist Rest (Rs 499) at Rs 0 + 5% cart discount",
+      "discount_percentage": 5.0,
+      "max_budget_inr": 50000.0,
+      "spent_budget_inr": 12450.0,
+      "conversions": 83,
+      "revenue_generated_inr": 414834.0,
+      "status": "ACTIVE"
+    },
+    {
+      "id": "camp_dev_eye_focus",
+      "title": "Deep Work Focus: ScreenBar + Desk Mat Combo",
+      "target_segment": "seg_ergonomic_focused",
+      "trigger_condition": "When user views developer gear / desk accessories",
+      "bundle_offer": "Save Rs 300 when bundling ScreenBar LED with Vegan Leather Desk Mat",
+      "discount_percentage": 10.0,
+      "max_budget_inr": 30000.0,
+      "spent_budget_inr": 8100.0,
+      "conversions": 54,
+      "revenue_generated_inr": 161460.0,
+      "status": "ACTIVE"
+    }
+  ]
+}
