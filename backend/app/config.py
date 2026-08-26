@@ -69,7 +69,12 @@ class Settings(BaseModel):
     GROQ_API_KEY: Optional[str] = None
     GROQ_MODEL: str = "openai/gpt-oss-20b"
     GROQ_MAX_TOOL_ROUNDS: int = 4
-    ENABLE_GROQ_BROWSER_SEARCH: bool = False
+    ENABLE_GROQ_BROWSER_SEARCH: bool = True
+
+    # Search & Market Intelligence (Tavily)
+    SEARCH_PROVIDER: str = "tavily"
+    TAVILY_API_KEY: Optional[str] = None
+    MAX_SEARCH_RESULTS: int = 5
 
     # Deterministic Guardrail Defaults
     DEFAULT_MAX_TXN_AMOUNT_INR: float = 5000.0        # Hard ceiling per single transaction
@@ -114,6 +119,7 @@ def load_settings(config_path: Optional[str] = None) -> Settings:
     payment_cfg = yaml_data.get("payment", {})
     audit_cfg = yaml_data.get("audit", {})
     llm_cfg = yaml_data.get("llm", {})
+    search_cfg = yaml_data.get("search", {})
     guardrails_cfg = yaml_data.get("guardrails", {})
     merchant_cfg = yaml_data.get("merchant", {})
 
@@ -227,10 +233,29 @@ def load_settings(config_path: Optional[str] = None) -> Settings:
     enable_groq_browser_search = _parse_bool(
         os.getenv("ENABLE_GROQ_BROWSER_SEARCH")
         if os.getenv("ENABLE_GROQ_BROWSER_SEARCH") is not None
-        else llm_cfg.get("enable_groq_browser_search", yaml_data.get("ENABLE_GROQ_BROWSER_SEARCH", False))
+        else llm_cfg.get("enable_groq_browser_search", yaml_data.get("ENABLE_GROQ_BROWSER_SEARCH", True))
     )
 
-    # 5. Guardrail defaults
+    # 5. Search & Market Intelligence (Tavily)
+    search_provider = (
+        os.getenv("SEARCH_PROVIDER")
+        or search_cfg.get("provider")
+        or yaml_data.get("SEARCH_PROVIDER")
+        or "tavily"
+    ).lower()
+    tavily_api_key = (
+        os.getenv("TAVILY_API_KEY")
+        or search_cfg.get("tavily_api_key")
+        or yaml_data.get("TAVILY_API_KEY")
+    )
+    max_search_results = _parse_int(
+        os.getenv("MAX_SEARCH_RESULTS")
+        or search_cfg.get("max_search_results")
+        or yaml_data.get("MAX_SEARCH_RESULTS"),
+        default=5
+    )
+
+    # 6. Guardrail defaults
     default_max_txn = _parse_float(
         os.getenv("DEFAULT_MAX_TXN_AMOUNT_INR")
         or guardrails_cfg.get("max_transaction_amount_inr")
@@ -313,6 +338,9 @@ def load_settings(config_path: Optional[str] = None) -> Settings:
         GROQ_MODEL=groq_model,
         GROQ_MAX_TOOL_ROUNDS=groq_max_tool_rounds,
         ENABLE_GROQ_BROWSER_SEARCH=enable_groq_browser_search,
+        SEARCH_PROVIDER=search_provider,
+        TAVILY_API_KEY=tavily_api_key,
+        MAX_SEARCH_RESULTS=max_search_results,
         DEFAULT_MAX_TXN_AMOUNT_INR=default_max_txn,
         DEFAULT_MAX_CUMULATIVE_SPEND_INR=default_max_cumulative,
         DEFAULT_APPROVAL_THRESHOLD_INR=default_approval_threshold,

@@ -8,6 +8,8 @@ from backend.app.tools.read_tools import read_tools
 from backend.app.tools.money_tools import money_tools
 from backend.app.guardrails.policy_engine import policy_engine
 from backend.app.audit.audit_service import audit_service
+from backend.app.llm.groq_agent import groq_catalog_agent
+from backend.app.tools.search_tools import tavily_search_engine
 
 class AgentReasoningStep(BaseModel):
     agent_name: str
@@ -47,54 +49,20 @@ class AutonomousCommerceAgentEngine:
         force_fail_payment: bool = False
     ) -> Dict[str, Any]:
         reasoning_steps: List[AgentReasoningStep] = []
-        lower_msg = user_message.lower().strip()
+        # Step 1: Dynamic LLM Intent Router & Entity Extractor
+        classified = groq_catalog_agent.classify_intent(user_message)
+        max_price = classified.max_price
+        include_bundle = classified.include_bundle
+        category = classified.category
 
-        # Step 1: Intent Router Agent Reasoning
-        intent_thought = f"Analyzing incoming prompt: '{user_message}'. Parsing buying intent, budget constraints, product keywords, and authorization tokens."
-        
-        # Check approval token
-        is_approval = bool(approval_token) or any(w in lower_msg for w in ["approve", "confirm purchase", "proceed with order", "authorize"])
-        
-        # Check price budget constraint
-        price_match = re.search(r'(?:under|below|budget|max|for)\s*(?:rs\.?|inr|₹)?\s*(\d+[\d,]*)', lower_msg)
-        if not price_match:
-            price_match = re.search(r'(\d+[\d,]*)\s*(?:rs|inr|rupees|₹)', lower_msg)
-        max_price = float(price_match.group(1).replace(',', '')) if price_match else None
-
-        # Check buy intent
-        is_checkout = any(w in lower_msg for w in [
-            "buy", "checkout", "purchase", "place order", "order now", "get me", "i'll take"
-        ])
-
-        # Check bundle modifiers
-        include_bundle = any(w in lower_msg for w in [
-            "bundle", "both", "wrist rest", "charger", "case", "cable", "chia", "shaker", "accessories", "add bundle"
-        ])
-
-        # Infer category focus
-        category = None
-        if any(w in lower_msg for w in ["peanut", "butter", "protein", "nutrition", "chia", "shaker", "gym", "diet", "whey", "snack", "supplement"]):
-            category = "nutrition_and_fitness"
-        elif any(w in lower_msg for w in ["running", "shoes", "shoe", "sneaker", "sneakers", "pegasus", "marathon", "socks"]):
-            category = "running_shoes"
-        elif any(w in lower_msg for w in ["keyboard", "keyboards", "keychron", "typing", "switch", "switches", "rk84", "ducky"]):
-            category = "mechanical_keyboards"
-        elif any(w in lower_msg for w in ["mouse", "mice", "vertical", "ergonomic", "ergonomics", "wrist"]):
-            category = "ergonomics"
-        elif any(w in lower_msg for w in ["headphone", "headphones", "headset", "audio", "anc", "sound"]):
-            category = "audio_equipment"
-        elif any(w in lower_msg for w in ["phone", "smartphone", "smartphones", "mobile", "android", "iphone", "pixel", "galaxy", "zenfone"]):
-            category = "smartphones"
-        elif any(w in lower_msg for w in ["screenbar", "light", "dock", "hub", "usbc"]):
-            category = "developer_gear"
-        elif any(w in lower_msg for w in ["desk", "deskmat", "stand", "cable", "mat"]):
-            category = "workspace_accessories"
+        is_approval = bool(approval_token) or classified.intent == "APPROVE" or any(w in lower_msg for w in ["approve", "confirm purchase", "proceed with order", "authorize"])
+        is_checkout = classified.intent in ["CHECKOUT", "CART_ADD"] or any(w in lower_msg for w in ["buy", "checkout", "purchase", "place order", "order now"])
 
         classified_intent = "APPROVAL" if is_approval else ("CHECKOUT" if (is_checkout or explicit_sku) else "DISCOVERY")
 
         reasoning_steps.append(AgentReasoningStep(
             agent_name="Intent Router Agent",
-            thought=f"Classified intent as '{classified_intent}'. Detected budget constraint: {'₹' + str(max_price) if max_price else 'Unspecified'}, Category affinity: '{category or 'Multi-Category'}'",
+            thought=f"Classified intent as '{classified_intent}' ({classified.provider}). Budget constraint: {'₹' + str(max_price) if max_price else 'Unspecified'}, Category affinity: '{category or 'Dynamic Semantic Search'}'",
             action=f"ROUTE_TO_{classified_intent}",
             arguments={"query": user_message, "category": category, "max_price": max_price, "include_bundle": include_bundle},
             result_summary=f"Handing off context to {classified_intent} agent subsystem."
@@ -254,18 +222,21 @@ class AutonomousCommerceAgentEngine:
 
         # Branch 3: Catalog Agent Discovery & Semantic Reasoning
         products = read_tools.catalog_lookup(ProductFilter(
-            query=lower_msg,
+            query=user_message,
             category=category,
             max_price=max_price
         ))
 
+        # Tavily AI Search for market intelligence & spec validation
+        web_intel = tavily_search_engine.search(query=user_message, max_results=3)
+
         reasoning_steps.append(AgentReasoningStep(
-            agent_name="Catalog Agent",
-            thought=f"Executed semantic catalog search for '{user_message}'. Retrieved {len(products)} matching candidate(s) within budget.",
-            action="SEARCH_CATALOG",
-            tool_called="catalog_lookup",
+            agent_name="Catalog & Market Research Agent",
+            thought=f"Queried merchant catalog (found {len(products)} match(es)) and verified live market intelligence via Tavily AI Search ({web_intel.get('total_results', 0)} sources).",
+            action="SEARCH_CATALOG_AND_WEB",
+            tool_called="tavily_search",
             arguments={"query": user_message, "category": category, "max_price": max_price},
-            result_summary=f"Found {len(products)} in-stock options."
+            result_summary=f"Catalog matches: {len(products)}. Tavily research: {web_intel.get('answer', 'Market context retrieved')}."
         ))
 
         if not products:

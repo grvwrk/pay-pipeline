@@ -46,7 +46,15 @@ llm:
   groq_model: "openai/gpt-oss-20b"
   groq_max_tool_rounds: 4
   # Allow Groq model to perform external browser search (catalog price/inventory remain authoritative)
-  enable_groq_browser_search: false
+  enable_groq_browser_search: true
+
+# ------------------------------------------------------------------------------
+# Web Search & Market Intelligence Configuration
+# ------------------------------------------------------------------------------
+search:
+  provider: "tavily"
+  tavily_api_key: null
+  max_search_results: 5
 
 # ------------------------------------------------------------------------------
 # Deterministic Guardrails & Spend Limiter Policy
