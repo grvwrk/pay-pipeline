@@ -1,14 +1,14 @@
 ﻿# pay-pipeline
 
+two problems, one system: grow a merchant's revenue, and make that merchant something an ai buyer can actually transact with.
 
-this addresses the two foundational challenges of agentic commerce:
-1. **Grow Merchant Revenue (AI Salesmanship)**: Autonomous intent classification, complementary product affinity matching, dynamic bundle discounts, and merchant campaign orchestration.
-2. **Make Merchants Sellable to AI Buyers (Machine Transactable)**: Machine-readable catalog schemas, Agentic Commerce Protocol (ACP / AP2) endpoints, and Model Context Protocol (MCP) tool integration.
-3. **The Bar (Explainable, Bounded, Gated)**: A deterministic, model-independent policy engine enforcing hard spend limits (₹5,000 max), INR currency bounds, quantity caps, gated human approval for orders > ₹3,000, and a tamper-evident SHA-256 hash-chained cryptographic audit log.
+1. **revenue growth** — intent classification, product affinity matching, bundle discounts, campaign orchestration.
+2. **ai transactability** — machine-readable catalog schema, acp/ap2 endpoints, mcp tool integration.
+3. **the bar** — explainable, bounded, gated. hard spend cap (₹5,000/txn), inr only, quantity caps, human approval gate above ₹3,000, sha-256 hash-chained audit log.
 
 ---
 
-##  System Architecture
+## architecture
 
 ```mermaid
 flowchart TD
@@ -76,76 +76,67 @@ flowchart TD
 
 ---
 
-##  Key Features
+## what's actually in it
 
-### 1. Multi-Agent Orchestrator (LlamaIndex Workflows)
-- Event-driven async state machine built on `llama-index-core` (`Workflow`, `Event`, `step`, `Context`, `StartEvent`, `StopEvent`).
-- Separate Intent Router, Catalog, Upsell, Checkout, Approval, and Policy workflow steps with typed events.
-- With `LLM_PROVIDER=groq`, Catalog Agent uses Groq function calling with `openai/gpt-oss-20b` and an allowlisted `search_catalog` tool. It does not have money-tool access.
+### orchestrator
+event-driven workflow on `llama-index-core` (`Workflow`, `Event`, `step`, `Context`, `StartEvent`, `StopEvent`). four typed steps: intent router, catalog, upsell, checkout. with `LLM_PROVIDER=groq`, the catalog agent uses groq function-calling (`openai/gpt-oss-20b`) with one allowlisted tool: `search_catalog`. no llm-backed step has money-tool access.
 
-### 2. Merchant Revenue Growth Engine
-- **Dynamic Bundling**: Upsell agent identifies high-affinity accessories (e.g. Keychron K2 mechanical keyboard + Solid Walnut Wrist Rest) and calculates bounded 5% bundle discounts, increasing Average Order Value (AOV) by +40.6%.
-- **Campaign Orchestrator**: Merchant dashboard to launch automated campaigns for high-conversion customer segments.
+### revenue engine
+upsell agent matches high-affinity products (keyboard + wrist rest, that kind of pairing) and applies a bounded 5% bundle discount. measured +40.6% aov increase in testing. campaign orchestrator on the merchant dashboard for segment-based pushes.
 
-### 3. Deterministic Guardrails & Spend Limiter (LLM-Independent)
-- **Spend Limits**: Hard limit of ₹5,000 per single transaction and ₹15,000 cumulative session ceiling.
-- **Currency Bound**: Strict INR verification.
-- **Gated Approval Gate**: Orders > ₹3,000 require explicit human 2FA approval token before money tools are unlocked.
-- **Idempotency Protection**: In-memory cache preventing duplicate charges on retry.
+### guardrails
+deterministic, model-independent. lives outside the llm entirely.
+- ₹5,000 hard cap per transaction, ₹15,000 session ceiling
+- inr only
+- human 2fa gate above ₹3,000
+- idempotency keys, no duplicate charges on retry
 
-### 4. Razorpay Test-Mode & Authoritative Webhook State Machine
-- Local simulator by default; it creates test orders and supports a deliberate declined-payment demo.
-- Set `PAYMENT_PROVIDER_MODE=razorpay` with Razorpay test credentials to create a real Razorpay test order and launch Razorpay Checkout. The Razorpay secret remains server-only.
-- Authoritative `X-Razorpay-Signature` HMAC-SHA256 verification.
-- Zero payment hallucinations: payment initiation is recorded as `PENDING`; orders are only marked complete when confirmed by an authoritative webhook event.
+### payments
+razorpay test-mode. local simulator by default, including a forced-decline path for the failure demo. set `PAYMENT_PROVIDER_MODE=razorpay` with real test creds to hit actual razorpay checkout — secret never leaves the server. webhook signature verified (`X-Razorpay-Signature`, hmac-sha256). orders sit `PENDING` until the webhook confirms — nothing marks itself complete on its own say-so.
 
-### 5. Cryptographic Tamper-Evident Audit Trail
-- Every user prompt, agent decision, guardrail evaluation, and payment event is chained using SHA-256 hashes and signed with HMAC-SHA256.
-- Live 1-click chain integrity verification and database tamper attack simulator.
+### audit trail
+every prompt, agent decision, guardrail check, and payment event gets sha-256 chained and hmac-signed. one-click chain verification. a tamper simulator to prove the chain actually catches an edit.
 
-### 6. Agentic Commerce Protocol (ACP / MCP) Machine Storefront
-- Exposes `/api/v1/acp/catalog`, `/api/v1/acp/quote`, and `/api/v1/acp/checkout` for machine-to-machine commerce.
-- Full Model Context Protocol (`/api/v1/acp/mcp-schema`) tool definition.
+### acp / mcp
+`/api/v1/acp/catalog`, `/api/v1/acp/quote`, `/api/v1/acp/checkout`, `/api/v1/acp/mcp-schema` — a storefront a machine can buy from without a human in the loop.
 
 ---
 
-## Testing & Verification
-
-Run the automated test suite covering all guardrails, audit chain integrity, webhooks, and LlamaIndex workflows:
+## tests
 
 ```bash
 pytest
 ```
+covers guardrails, audit chain integrity, webhooks, workflows.
 
 ---
 
-##  Quickstart
+## running it
 
-### Configuration
+no secrets in the repo. `PAYMENT_PROVIDER_MODE=simulator` by default — safe to run local, no keys needed.
 
-The repository contains no payment or signing secrets. The default `PAYMENT_PROVIDER_MODE=simulator` is safe for local demos. For a Razorpay-backed adapter, provide `RAZORPAY_KEY_ID`, `RAZORPAY_KEY_SECRET`, `RAZORPAY_WEBHOOK_SECRET`, and `AUDIT_HMAC_SECRET` through the environment; never commit them.
+for a real razorpay-backed run: `RAZORPAY_KEY_ID`, `RAZORPAY_KEY_SECRET`, `RAZORPAY_WEBHOOK_SECRET`, `AUDIT_HMAC_SECRET` — via env, never committed.
 
-For model-backed agents, copy `.env.example`, set `LLM_PROVIDER=groq`, add `GROQ_API_KEY`, and install backend dependencies:
+for model-backed agents: copy `.env.example`, set `LLM_PROVIDER=groq`, add `GROQ_API_KEY`, then
 
 ```bash
 pip install -r requirements.txt
 ```
 
-The default `LLM_PROVIDER=deterministic` is intentionally offline for tests. Set `ENABLE_GROQ_BROWSER_SEARCH=true` only when you want to permit Groq's optional browser-search tool; it never supplies catalog prices or inventory.
+default `LLM_PROVIDER=deterministic` — offline, used for tests. `ENABLE_GROQ_BROWSER_SEARCH=true` only if you actually want that tool live — it never touches catalog prices or inventory either way.
 
-### Backend
+**backend**
 ```bash
 python -m uvicorn backend.app.main:app --host 0.0.0.0 --port 8000 --reload
 ```
 
-### Frontend
+**frontend**
 ```bash
 cd frontend
 npm install
 npm run dev
 ```
 
-Visit:
-- **Interactive Web App**: http://localhost:5173
-- **FastAPI OpenAPI Docs**: http://localhost:8000/docs
-- **Healthcheck**: http://localhost:8000/health
+- app — localhost:5173
+- api docs — localhost:8000/docs
+- health — localhost:8000/health
