@@ -1,4 +1,6 @@
 import uuid
+from copy import deepcopy
+from datetime import datetime, timedelta, timezone
 from fastapi import APIRouter, HTTPException, Header
 from typing import Optional, Dict
 from backend.app.config import settings
@@ -19,7 +21,7 @@ from backend.app.audit.audit_service import audit_service
 router = APIRouter(prefix="/acp", tags=["Agentic Commerce Protocol (Machine-to-Machine)"])
 
 # In-memory quote cache for machine-to-machine transactions
-_quotes_db: Dict[str, Cart] = {}
+_quotes_db: Dict[str, Dict[str, object]] = {}
 
 @router.get("/catalog", response_model=ACPDiscoveryResponse)
 def get_machine_catalog():
@@ -92,7 +94,10 @@ def get_quote(req: ACPQuoteRequest):
     policy_res = policy_engine.evaluate(cart=cart, user_id=req.agent_id)
 
     quote_id = f"quote_{uuid.uuid4().hex[:10]}"
-    _quotes_db[quote_id] = cart
+    expires_at = datetime.now(timezone.utc) + timedelta(seconds=300)
+    # Preserve the exact priced cart. Checkout may not substitute an arbitrary
+    # catalog item when a quote is missing or expired.
+    _quotes_db[quote_id] = {"cart": cart.model_copy(deep=True), "expires_at": expires_at}
 
     return ACPQuoteResponse(
         quote_id=quote_id,
@@ -102,29 +107,22 @@ def get_quote(req: ACPQuoteRequest):
         total_amount=cart.total_amount,
         currency="INR",
         guardrail_precheck="PASS" if policy_res.allowed else "DENIED",
-        expires_in_seconds=300
+        expires_in_seconds=300,
+        expires_at=expires_at.isoformat()
     )
 
 @router.post("/checkout", response_model=ACPCheckoutResponse)
 def execute_acp_checkout(req: ACPCheckoutRequest):
     """Programmatic transaction endpoint for external AI buyers using quoted items."""
-    if req.quote_id in _quotes_db:
-        cart = _quotes_db[req.quote_id]
-        cart.user_id = req.buyer_agent_id
-    else:
-        # Construct cart from first matching or default catalog item
-        cart = Cart(user_id=req.buyer_agent_id)
-        p = read_tools.catalog[0] if read_tools.catalog else None
-        if not p:
-            raise HTTPException(status_code=500, detail="Catalog is empty")
-        cart.items.append(CartItem(
-            product_id=p.id,
-            name=p.name,
-            price=p.price,
-            subtotal=p.price,
-            category=p.category
-        ))
-        cart.recalculate()
+    quote = _quotes_db.get(req.quote_id)
+    if not quote:
+        raise HTTPException(status_code=404, detail="Unknown quote_id. Request a quote before checkout.")
+    if quote["expires_at"] <= datetime.now(timezone.utc):
+        del _quotes_db[req.quote_id]
+        raise HTTPException(status_code=410, detail="Quote has expired. Request a new quote before checkout.")
+
+    cart = deepcopy(quote["cart"])
+    cart.user_id = req.buyer_agent_id
 
     order_res = money_tools.create_order_guarded(
         cart=cart,

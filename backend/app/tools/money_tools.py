@@ -1,5 +1,6 @@
 from typing import Optional, Dict, Any
 from backend.app.models.cart import Cart
+from backend.app.config import settings
 from backend.app.models.order import RazorpayOrder, PaymentCaptureResult, RefundResult
 from backend.app.guardrails.policy_engine import policy_engine
 from backend.app.guardrails.idempotency import idempotency_manager
@@ -82,18 +83,18 @@ class PrivilegedMoneyTools:
         res = razorpay_client.simulate_payment_capture(order_id, amount_inr, method, force_fail)
         
         if res.status == "captured":
-            spend_limiter.record_spend(user_id, amount_inr)
             audit_service.record_event(
                 actor_id=user_id,
                 actor_role="RAZORPAY_API",
-                action="CAPTURE_PAYMENT_SUCCESS",
+                action="PAYMENT_CAPTURE_AWAITING_WEBHOOK",
                 tool_name="capture_payment",
                 arguments={"payment_id": res.payment_id, "order_id": order_id, "amount": amount_inr, "method": method},
                 guardrail_decision="APPROVED",
-                result_status="SUCCESS",
-                explainability_notes=f"Payment {res.payment_id} successfully captured on Razorpay test rails."
+                result_status="PENDING",
+                explainability_notes=(f"Payment {res.payment_id} was initiated in {settings.PAYMENT_PROVIDER_MODE} mode. "
+                                      "It is not marked successful until a signed payment.captured webhook is received.")
             )
-            return {"success": True, "payment": res.model_dump()}
+            return {"success": False, "verification_pending": True, "payment": res.model_dump()}
         else:
             audit_service.record_event(
                 actor_id=user_id,

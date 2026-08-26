@@ -4,6 +4,7 @@ from backend.app.payment.razorpay_client import razorpay_client
 from backend.app.payment.state_machine import state_machine
 from backend.app.models.order import TransactionState
 from backend.app.audit.audit_service import audit_service
+from backend.app.guardrails.spend_limiter import spend_limiter
 
 class AuthoritativeWebhookHandler:
     @classmethod
@@ -28,6 +29,9 @@ class AuthoritativeWebhookHandler:
         amount = float(entity.get("amount", 0)) / 100.0
 
         if event_type == "payment.captured":
+            buyer_id = razorpay_client.reconcile_verified_payment(order_id, payment_id, amount)
+            if buyer_id:
+                spend_limiter.record_spend(buyer_id, amount)
             audit_service.record_event(
                 actor_id="RAZORPAY_SERVER",
                 actor_role="PAYMENT_GATEWAY",
@@ -35,7 +39,8 @@ class AuthoritativeWebhookHandler:
                 arguments={"order_id": order_id, "payment_id": payment_id, "amount": amount, "event": event_type},
                 transaction_state=TransactionState.PAYMENT_CAPTURED,
                 result_status="SUCCESS",
-                explainability_notes=f"Authoritative webhook verified for {payment_id}. State transitioned to PAYMENT_CAPTURED."
+                explainability_notes=(f"Authoritative webhook verified for {payment_id}. "
+                                      "A matching local order, when present, was transitioned to COMPLETED.")
             )
             return True, "PAYMENT_CAPTURED_VERIFIED", {"order_id": order_id, "payment_id": payment_id, "amount": amount}
 

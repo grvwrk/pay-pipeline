@@ -31,13 +31,13 @@ class ReadAndDecisionTools:
         if filter_params.max_price is not None and filter_params.max_price > 0:
             candidates = [p for p in candidates if p.price <= filter_params.max_price]
 
-        # 3. Category Filter
+        # 3. Category Filter (soft matching to allow cross-category fallback if empty)
         if filter_params.category:
             cat_matches = [p for p in candidates if p.category.lower() == filter_params.category.lower()]
             if cat_matches:
                 candidates = cat_matches
 
-        # 4. Semantic Keyword Scoring
+        # 4. Semantic Keyword Scoring & Specification Reasoning
         if filter_params.query:
             raw_query = filter_params.query.lower()
             stop_words = {
@@ -45,6 +45,8 @@ class ReadAndDecisionTools:
                 "rs", "inr", "rupees", "for", "a", "an", "with", "around", "i", "need", "want", "show", "buy"
             }
             tokens = [t for t in re.findall(r'[a-zA-Z0-9_.]+', raw_query) if t not in stop_words and len(t) > 1]
+
+            wants_highest_protein = any(p in raw_query for p in ["highest protein", "high protein", "max protein", "protein %", "protein percent"])
 
             scored_items = []
             for p in candidates:
@@ -54,17 +56,24 @@ class ReadAndDecisionTools:
                 # Dynamic token matching
                 for token in tokens:
                     if token in p.name.lower():
-                        score += 30
+                        score += 35
                     if any(token == tag.lower() or token in tag.lower() for tag in p.tags):
-                        score += 25
+                        score += 30
                     if token in p.category.lower():
                         score += 20
                     if token in searchable_text:
-                        score += 10
+                        score += 15
 
-                # Query phrase matching
+                # Phrase matching
                 if p.name.lower() in raw_query or any(tag.lower() in raw_query for tag in p.tags):
                     score += 40
+
+                # Protein percentage reasoning for fitness/nutrition queries
+                if wants_highest_protein and "protein_percentage" in p.specs:
+                    prot_match = re.search(r'(\d+)%', str(p.specs["protein_percentage"]))
+                    if prot_match:
+                        prot_num = int(prot_match.group(1))
+                        score += prot_num * 3  # Higher % gets larger score boost
 
                 if score > 0 or not tokens:
                     scored_items.append((score, p))

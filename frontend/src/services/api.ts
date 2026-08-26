@@ -27,6 +27,16 @@ export const api = {
     return res.json();
   },
 
+  initiatePayment: async (orderId: string, amountInr: number, method: "upi" | "card", simulateFailure = false) => {
+    const res = await fetch(`${BASE_URL}/payments/initiate`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ order_id: orderId, amount_inr: amountInr, method, simulate_failure: simulateFailure })
+    });
+    if (!res.ok) throw new Error(await res.text());
+    return res.json();
+  },
+
   // ACP Machine Discovery & Quote
   getACPCatalog: async () => {
     const res = await fetch(`${BASE_URL}/acp/catalog`);

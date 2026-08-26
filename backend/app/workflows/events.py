@@ -56,3 +56,12 @@ class ApprovalConfirmationEvent(Event):
     approval_token: str
     target_sku: Optional[str] = None
     idempotency_key: Optional[str] = None
+
+
+class CheckoutCartEvent(Event):
+    """A cart assembled by Checkout Agent; only Policy Agent may advance it."""
+    cart: Cart
+    user_id: str
+    approval_token: Optional[str] = None
+    idempotency_key: Optional[str] = None
+    reasoning_steps: List[Dict[str, Any]] = []

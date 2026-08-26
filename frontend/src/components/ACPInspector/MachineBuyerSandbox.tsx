@@ -6,6 +6,7 @@ export const MachineBuyerSandbox: React.FC = () => {
   const [activeEndpoint, setActiveEndpoint] = useState<"catalog" | "quote" | "checkout" | "mcp">("catalog");
   const [responseJson, setResponseJson] = useState<any>(null);
   const [loading, setLoading] = useState(false);
+  const [quoteId, setQuoteId] = useState<string | null>(null);
 
   const runDiscovery = async () => {
     setLoading(true);
@@ -24,6 +25,7 @@ export const MachineBuyerSandbox: React.FC = () => {
     try {
       const res = await api.getACPQuote(["sku_kb_keychron_k2"], true);
       setResponseJson(res);
+      setQuoteId(res.quote_id);
     } catch (e: any) {
       setResponseJson({ error: e.message });
     } finally {
@@ -34,7 +36,11 @@ export const MachineBuyerSandbox: React.FC = () => {
   const runCheckout = async () => {
     setLoading(true);
     try {
-      const res = await api.executeACPCheckout("quote_auto_test", `acp_idem_${Date.now()}`);
+      if (!quoteId) {
+        setResponseJson({ error: "Request a quote before checkout. Checkout only accepts an unexpired quoted cart." });
+        return;
+      }
+      const res = await api.executeACPCheckout(quoteId, `acp_idem_${Date.now()}`);
       setResponseJson(res);
     } catch (e: any) {
       setResponseJson({ error: e.message });

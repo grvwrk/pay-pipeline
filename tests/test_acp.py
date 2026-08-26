@@ -1,4 +1,5 @@
 import pytest, uuid
+from fastapi import HTTPException
 from backend.app.tools.read_tools import read_tools
 from backend.app.tools.money_tools import money_tools
 from backend.app.models.cart import Cart, CartItem
@@ -35,6 +36,7 @@ def test_acp_quote_and_checkout_flow():
     assert quote_resp.quote_id.startswith("quote_")
     assert quote_resp.total_amount == 2299.0
     assert quote_resp.guardrail_precheck == "PASS"
+    assert quote_resp.expires_at
 
     # 2. Execute Programmatic Checkout
     checkout_req = ACPCheckoutRequest(
@@ -47,6 +49,15 @@ def test_acp_quote_and_checkout_flow():
     assert checkout_resp.order_id.startswith("order_")
     assert checkout_resp.amount == 2299.0
     assert checkout_resp.signature is not None
+
+def test_acp_checkout_rejects_unknown_quote():
+    request = ACPCheckoutRequest(
+        quote_id="quote_not_issued", idempotency_key=f"acp_test_{uuid.uuid4().hex[:8]}",
+        buyer_agent_id="ext_buyer"
+    )
+    with pytest.raises(HTTPException) as error:
+        execute_acp_checkout(request)
+    assert error.value.status_code == 404
 
 def test_mcp_tool_definitions_schema():
     schema = get_mcp_tool_definitions()

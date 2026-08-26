@@ -1,13 +1,13 @@
 import React, { useState } from "react";
 import { RazorpayOrder } from "../../types";
 import { ShieldCheck, CreditCard, Smartphone, CheckCircle2, AlertTriangle, X } from "lucide-react";
-import confetti from "canvas-confetti";
+import { api } from "../../services/api";
 
 interface RazorpayCheckoutModalProps {
   isOpen: boolean;
   onClose: () => void;
   order: RazorpayOrder;
-  onPaymentComplete: (paymentId: string, status: "captured" | "failed") => void;
+  onPaymentComplete: (paymentId: string, status: "pending" | "failed") => void;
 }
 
 export const RazorpayCheckoutModal: React.FC<RazorpayCheckoutModalProps> = ({
@@ -21,22 +21,16 @@ export const RazorpayCheckoutModal: React.FC<RazorpayCheckoutModalProps> = ({
 
   if (!isOpen) return null;
 
-  const handlePay = (shouldFail: boolean = false) => {
+  const handlePay = async (shouldFail: boolean = false) => {
     setIsProcessing(true);
-    setTimeout(() => {
-      setIsProcessing(false);
-      if (shouldFail) {
-        onPaymentComplete(`pay_${Math.random().toString(36).substring(2, 10)}`, "failed");
-      } else {
-        confetti({
-          particleCount: 80,
-          spread: 60,
-          origin: { y: 0.6 }
-        });
-        onPaymentComplete(`pay_${Math.random().toString(36).substring(2, 10)}`, "captured");
-      }
+    try {
+      const result = await api.initiatePayment(order.order_id, order.amount, method, shouldFail);
+      const paymentId = result.payment?.payment_id || "pending";
+      onPaymentComplete(paymentId, result.verification_pending ? "pending" : "failed");
       onClose();
-    }, 1200);
+    } finally {
+      setIsProcessing(false);
+    }
   };
 
   return (

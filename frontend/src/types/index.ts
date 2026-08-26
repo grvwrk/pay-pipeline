@@ -159,6 +159,15 @@ export interface Campaign {
   status: string;
 }
 
+export interface AgentReasoningStep {
+  agent_name: string;
+  thought: string;
+  action?: string;
+  tool_called?: string;
+  arguments?: Record<string, any>;
+  result_summary?: string;
+}
+
 export interface ChatMessage {
   id: string;
   sender: "user" | "agent" | "system";
@@ -171,4 +180,5 @@ export interface ChatMessage {
   requires_approval?: boolean;
   approval_token?: string;
   guardrail_denied?: boolean;
+  reasoning_steps?: AgentReasoningStep[];
 }

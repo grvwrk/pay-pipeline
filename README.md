@@ -93,9 +93,9 @@ flowchart TD
 - **Idempotency Protection**: In-memory cache preventing duplicate charges on retry.
 
 ### 4. Razorpay Test-Mode & Authoritative Webhook State Machine
-- Razorpay order creation, payment capture, and refunds.
+- Local simulator by default; it creates test orders and supports a deliberate declined-payment demo. A production Razorpay adapter must be configured with environment credentials before it can initiate a real test-mode request.
 - Authoritative `X-Razorpay-Signature` HMAC-SHA256 verification.
-- Zero payment hallucinations: orders only marked complete when confirmed by authoritative webhook events.
+- Zero payment hallucinations: payment initiation is recorded as `PENDING`; orders are only marked complete when confirmed by an authoritative webhook event.
 
 ### 5. Cryptographic Tamper-Evident Audit Trail
 - Every user prompt, agent decision, guardrail evaluation, and payment event is chained using SHA-256 hashes and signed with HMAC-SHA256.
@@ -118,6 +118,10 @@ pytest
 ---
 
 ##  Quickstart
+
+### Configuration
+
+The repository contains no payment or signing secrets. The default `PAYMENT_PROVIDER_MODE=simulator` is safe for local demos. For a Razorpay-backed adapter, provide `RAZORPAY_KEY_ID`, `RAZORPAY_KEY_SECRET`, `RAZORPAY_WEBHOOK_SECRET`, and `AUDIT_HMAC_SECRET` through the environment; never commit them.
 
 ### Backend
 ```bash

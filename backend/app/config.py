@@ -1,4 +1,5 @@
 import os
+import secrets
 from pydantic import BaseModel
 from typing import Optional, List
 
@@ -8,13 +9,15 @@ class Settings(BaseModel):
     PORT: int = 8000
     HOST: str = "0.0.0.0"
     
-    # Razorpay Test Credentials
-    RAZORPAY_KEY_ID: str = os.getenv("RAZORPAY_KEY_ID", "rzp_test_aeropay_demo_key")
-    RAZORPAY_KEY_SECRET: str = os.getenv("RAZORPAY_KEY_SECRET", "rzp_test_secret_aeropay_2026")
-    RAZORPAY_WEBHOOK_SECRET: str = os.getenv("RAZORPAY_WEBHOOK_SECRET", "whsec_aeropay_webhook_secret_9988")
+    # Credentials are never embedded in source. The default gateway is an
+    # explicitly local simulator; real test-mode integration requires env vars.
+    PAYMENT_PROVIDER_MODE: str = os.getenv("PAYMENT_PROVIDER_MODE", "simulator")
+    RAZORPAY_KEY_ID: Optional[str] = os.getenv("RAZORPAY_KEY_ID")
+    RAZORPAY_KEY_SECRET: Optional[str] = os.getenv("RAZORPAY_KEY_SECRET")
+    RAZORPAY_WEBHOOK_SECRET: str = os.getenv("RAZORPAY_WEBHOOK_SECRET") or secrets.token_urlsafe(32)
     
     # Cryptographic Audit Secret
-    AUDIT_HMAC_SECRET: str = os.getenv("AUDIT_HMAC_SECRET", "aeropay_cryptographic_audit_signing_key_402")
+    AUDIT_HMAC_SECRET: str = os.getenv("AUDIT_HMAC_SECRET") or secrets.token_urlsafe(32)
     
     # Deterministic Guardrail Defaults
     DEFAULT_MAX_TXN_AMOUNT_INR: float = 5000.0      # Hard ceiling per single transaction
@@ -30,7 +33,10 @@ class Settings(BaseModel):
         "workspace_accessories",
         "developer_gear",
         "ergonomics",
-        "audio_equipment"
+        "audio_equipment",
+        "nutrition_and_fitness",
+        "running_shoes",
+        "health_and_groceries"
     ]
     MERCHANT_ID: str = "merch_aeropay_electronics_01"
     MERCHANT_NAME: str = "AeroNation Tech & Lifestyle Store"

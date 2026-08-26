@@ -1,204 +1,231 @@
 [
   {
-    "id": "sku_phone_zenfone_10_compact",
-    "name": "Asus Zenfone 10 Compact Flagship (5.9\" 144Hz AMOLED)",
-    "category": "smartphones",
-    "price": 48499.0,
+    "id": "sku_nutr_pintola_high_protein_pb",
+    "name": "Pintola High Protein Dark Chocolate Peanut Butter (36% Protein, 1kg)",
+    "category": "nutrition_and_fitness",
+    "price": 649.0,
     "currency": "INR",
-    "inventory": 18,
+    "inventory": 60,
+    "rating": 4.92,
+    "review_count": 1420,
+    "shipping_eta_hours": 12,
+    "tags": [
+      "peanut_butter",
+      "peanut",
+      "butter",
+      "high_protein",
+      "protein",
+      "highest_protein",
+      "36_percent_protein",
+      "whey_protein",
+      "dark_chocolate",
+      "fitness",
+      "gym_diet",
+      "nutrition",
+      "snack"
+    ],
+    "specs": {
+      "protein_percentage": "36% (36g Protein per 100g - Highest in Market)",
+      "protein_per_serving": "11.5g Protein per 32g scoop",
+      "weight": "1kg (1000g)",
+      "ingredients": "Roasted Peanuts, Imported Whey Protein Isolate, Dark Chocolate, Cocoa"
+    },
+    "complementary_product_ids": [
+      "sku_nutr_organic_chia_seeds",
+      "sku_nutr_shaker_bottle_pro"
+    ],
+    "image_url": "https://images.unsplash.com/photo-1590080875515-8a3a8dc5735e?w=600&auto=format&fit=crop&q=80",
+    "description": "India's highest protein peanut butter delivering 36g protein per 100g infused with imported Whey Protein Isolate and rich dark chocolate."
+  },
+  {
+    "id": "sku_nutr_alpino_super_pb",
+    "name": "Alpino Super High Protein All-Natural Peanut Butter (33% Protein, 1kg)",
+    "category": "nutrition_and_fitness",
+    "price": 549.0,
+    "currency": "INR",
+    "inventory": 75,
+    "rating": 4.85,
+    "review_count": 890,
+    "shipping_eta_hours": 12,
+    "tags": [
+      "peanut_butter",
+      "peanut",
+      "butter",
+      "high_protein",
+      "protein",
+      "33_percent_protein",
+      "all_natural",
+      "unsweetened",
+      "crunchy",
+      "fitness",
+      "nutrition"
+    ],
+    "specs": {
+      "protein_percentage": "33% (33g Protein per 100g)",
+      "protein_per_serving": "10.5g Protein per 32g scoop",
+      "weight": "1kg (1000g)",
+      "ingredients": "100% Roasted Peanuts, Zero Added Sugar, Zero Palm Oil"
+    },
+    "complementary_product_ids": [
+      "sku_nutr_organic_chia_seeds",
+      "sku_nutr_shaker_bottle_pro"
+    ],
+    "image_url": "https://images.unsplash.com/photo-1628191010210-a59de33e5941?w=600&auto=format&fit=crop&q=80",
+    "description": "100% all-natural crunchy peanut butter with 33g natural protein and zero hydrogenated oils."
+  },
+  {
+    "id": "sku_nutr_myfitness_chocolate_pb",
+    "name": "MyFitness Original Dark Chocolate Crispy Peanut Butter (26% Protein, 1kg)",
+    "category": "nutrition_and_fitness",
+    "price": 599.0,
+    "currency": "INR",
+    "inventory": 85,
+    "rating": 4.8,
+    "review_count": 2100,
+    "shipping_eta_hours": 24,
+    "tags": [
+      "peanut_butter",
+      "peanut",
+      "butter",
+      "chocolate_peanut_butter",
+      "protein",
+      "26_percent_protein",
+      "crispy",
+      "snack",
+      "fitness"
+    ],
+    "specs": {
+      "protein_percentage": "26% (26g Protein per 100g)",
+      "protein_per_serving": "8.3g Protein per 32g scoop",
+      "weight": "1kg (1000g)",
+      "ingredients": "Roasted Peanuts, Belgian Dark Chocolate, Brown Rice Crisps"
+    },
+    "complementary_product_ids": [
+      "sku_nutr_organic_chia_seeds"
+    ],
+    "image_url": "https://images.unsplash.com/photo-1589733955941-5eeaf752f6dd?w=600&auto=format&fit=crop&q=80",
+    "description": "Crispy Belgian dark chocolate peanut butter crafted with roasted brown rice crisps."
+  },
+  {
+    "id": "sku_nutr_organic_chia_seeds",
+    "name": "AeroNutra Organic Raw Chia Seeds (High Fiber & Omega-3, 500g)",
+    "category": "nutrition_and_fitness",
+    "price": 299.0,
+    "currency": "INR",
+    "inventory": 120,
+    "rating": 4.85,
+    "review_count": 410,
+    "shipping_eta_hours": 12,
+    "tags": [
+      "chia_seeds",
+      "superfood",
+      "fiber",
+      "omega3",
+      "snack",
+      "fitness_bundle",
+      "protein_topper",
+      "nutrition"
+    ],
+    "specs": {
+      "protein_percentage": "20% (20g Protein per 100g)",
+      "benefits": "Rich in Omega-3, Dietary Fiber, Antioxidants",
+      "weight": "500g"
+    },
+    "complementary_product_ids": [
+      "sku_nutr_pintola_high_protein_pb",
+      "sku_nutr_alpino_super_pb"
+    ],
+    "image_url": "https://images.unsplash.com/photo-1546069901-ba9599a7e63c?w=600&auto=format&fit=crop&q=80",
+    "description": "100% Certified Organic raw chia seeds to top on peanut butter bowls and protein shakes."
+  },
+  {
+    "id": "sku_nutr_shaker_bottle_pro",
+    "name": "AeroPro Stainless Steel Insulated Protein Shaker (750ml with Blender Ball)",
+    "category": "nutrition_and_fitness",
+    "price": 499.0,
+    "currency": "INR",
+    "inventory": 80,
+    "rating": 4.75,
+    "review_count": 320,
+    "shipping_eta_hours": 12,
+    "tags": [
+      "shaker",
+      "protein_shaker",
+      "gym_bottle",
+      "stainless_steel",
+      "leak_proof",
+      "fitness"
+    ],
+    "specs": {
+      "capacity": "750ml",
+      "material": "Food-grade 304 Stainless Steel (BPA Free)",
+      "insulation": "Keeps cold for 12 hours"
+    },
+    "complementary_product_ids": [
+      "sku_nutr_pintola_high_protein_pb"
+    ],
+    "image_url": "https://images.unsplash.com/photo-1517838277536-f5f99be501cd?w=600&auto=format&fit=crop&q=80",
+    "description": "Sleek double-wall insulated shaker with surgical stainless steel wire whisk ball."
+  },
+  {
+    "id": "sku_shoes_nike_pegasus_running",
+    "name": "Nike Air Zoom Pegasus 40 Road Running Shoes (Size 10)",
+    "category": "running_shoes",
+    "price": 4899.0,
+    "currency": "INR",
+    "inventory": 20,
     "rating": 4.9,
+    "review_count": 640,
+    "shipping_eta_hours": 24,
+    "tags": [
+      "running_shoes",
+      "running",
+      "shoes",
+      "road_running",
+      "long_distance",
+      "marathon",
+      "breathable",
+      "size_10"
+    ],
+    "specs": {
+      "cushioning": "Dual Nike Zoom Air units with React Foam",
+      "surface": "Road / Track Long Distance",
+      "size": "UK/India 10 (EU 44)",
+      "weight": "285g"
+    },
+    "complementary_product_ids": [
+      "sku_acc_running_socks_cushion"
+    ],
+    "image_url": "https://images.unsplash.com/photo-1542291026-7eec264c27ff?w=600&auto=format&fit=crop&q=80",
+    "description": "Iconic workhorse running shoes engineered with dual Zoom Air units and ultra-breathable engineered mesh."
+  },
+  {
+    "id": "sku_acc_running_socks_cushion",
+    "name": "AeroStride Anti-Blister Compression Running Socks (Pack of 3)",
+    "category": "running_shoes",
+    "price": 399.0,
+    "currency": "INR",
+    "inventory": 90,
+    "rating": 4.8,
     "review_count": 215,
     "shipping_eta_hours": 24,
     "tags": [
-      "smartphone",
-      "phone",
-      "mobile",
-      "small_display",
-      "compact_phone",
-      "small_screen",
-      "5.9_inch",
-      "snapdragon_8_gen_2",
-      "one_hand"
+      "socks",
+      "running_socks",
+      "compression",
+      "anti_blister",
+      "dry_fit",
+      "running"
     ],
     "specs": {
-      "display": "5.9-inch 144Hz HDR10+ Compact AMOLED (146.5 x 68.1 mm)",
-      "processor": "Qualcomm Snapdragon 8 Gen 2 (4nm)",
-      "ram_storage": "8GB LPDDR5X + 256GB UFS 4.0",
-      "camera": "50MP Sony IMX766 with 6-Axis Hybrid Gimbal Stabilizer 2.0",
-      "battery": "4300mAh with 30W HyperCharge + 15W Wireless Charging"
+      "fabric": "CoolMax Moisture Wicking + Elastane",
+      "support": "Arch Band Support & Seamless Toe"
     },
     "complementary_product_ids": [
-      "sku_acc_gan_charger_65w",
-      "sku_acc_mag_case_glass"
+      "sku_shoes_nike_pegasus_running"
     ],
-    "image_url": "https://images.unsplash.com/photo-1598327105666-5b89351aff97?w=600&auto=format&fit=crop&q=80",
-    "description": "The ultimate pocket-sized flagship smartphone with a 5.9-inch compact display, flagship Snapdragon 8 Gen 2, and 6-axis gimbal stabilization."
-  },
-  {
-    "id": "sku_phone_pixel_8a_compact",
-    "name": "Google Pixel 8a 5G (6.1\" Actua OLED Compact Display)",
-    "category": "smartphones",
-    "price": 42999.0,
-    "currency": "INR",
-    "inventory": 24,
-    "rating": 4.8,
-    "review_count": 480,
-    "shipping_eta_hours": 24,
-    "tags": [
-      "smartphone",
-      "phone",
-      "mobile",
-      "small_display",
-      "compact_phone",
-      "google_pixel",
-      "pixel_8a",
-      "ai_phone",
-      "6.1_inch",
-      "oled"
-    ],
-    "specs": {
-      "display": "6.1-inch Actua OLED 120Hz (Up to 2000 nits peak)",
-      "processor": "Google Tensor G3 with Titan M2 security coprocessor",
-      "ram_storage": "8GB RAM + 128GB Storage",
-      "camera": "64MP Quad PD wide + 13MP ultrawide with Best Take & Magic Editor",
-      "battery": "4492mAh with 24-hour battery life and Fast Charging"
-    },
-    "complementary_product_ids": [
-      "sku_acc_gan_charger_65w",
-      "sku_audio_anc_headset"
-    ],
-    "image_url": "https://images.unsplash.com/photo-1511707171634-5f897ff02aa9?w=600&auto=format&fit=crop&q=80",
-    "description": "Compact 6.1-inch Google AI-powered phone with incredible camera performance and 7 years of OS updates."
-  },
-  {
-    "id": "sku_phone_galaxy_s23_compact",
-    "name": "Samsung Galaxy S23 5G (6.1\" Dynamic AMOLED 2X)",
-    "category": "smartphones",
-    "price": 49999.0,
-    "currency": "INR",
-    "inventory": 15,
-    "rating": 4.85,
-    "review_count": 620,
-    "shipping_eta_hours": 24,
-    "tags": [
-      "smartphone",
-      "phone",
-      "mobile",
-      "small_display",
-      "compact",
-      "samsung",
-      "galaxy_s23",
-      "small_screen",
-      "6.1_inch",
-      "flagship"
-    ],
-    "specs": {
-      "display": "6.1-inch Flat FHD+ Dynamic AMOLED 2X (120Hz Adaptive)",
-      "processor": "Snapdragon 8 Gen 2 for Galaxy",
-      "ram_storage": "8GB RAM + 128GB Storage",
-      "camera": "50MP Wide + 12MP Ultra-Wide + 10MP 3x Optical Telephoto",
-      "body": "Armor Aluminum frame with Gorilla Glass Victus 2 (IP68)"
-    },
-    "complementary_product_ids": [
-      "sku_acc_gan_charger_65w",
-      "sku_acc_mag_case_glass"
-    ],
-    "image_url": "https://images.unsplash.com/photo-1610945265064-0e34e5519bbf?w=600&auto=format&fit=crop&q=80",
-    "description": "Ultra-sleek 6.1-inch compact flagship with Snapdragon 8 Gen 2 and pro-grade triple cameras."
-  },
-  {
-    "id": "sku_phone_iphone_13_mini",
-    "name": "Apple iPhone 13 mini (5.4\" Super Retina XDR)",
-    "category": "smartphones",
-    "price": 46999.0,
-    "currency": "INR",
-    "inventory": 10,
-    "rating": 4.9,
-    "review_count": 890,
-    "shipping_eta_hours": 24,
-    "tags": [
-      "phone",
-      "smartphone",
-      "iphone",
-      "apple",
-      "small_display",
-      "compact",
-      "mini_phone",
-      "5.4_inch",
-      "ios"
-    ],
-    "specs": {
-      "display": "5.4-inch Super Retina XDR OLED (Compact one-hand design)",
-      "processor": "A15 Bionic chip (6-core CPU + 4-core GPU)",
-      "ram_storage": "128GB Storage",
-      "camera": "Advanced dual 12MP system with Sensor-shift OIS & Cinematic mode",
-      "build": "Ceramic Shield front + Aerospace-grade aluminum"
-    },
-    "complementary_product_ids": [
-      "sku_acc_gan_charger_65w",
-      "sku_acc_mag_case_glass"
-    ],
-    "image_url": "https://images.unsplash.com/photo-1592750475338-74b7b21085ab?w=600&auto=format&fit=crop&q=80",
-    "description": "The most powerful compact 5.4-inch smartphone ever made with A15 Bionic and Cinematic 4K video."
-  },
-  {
-    "id": "sku_acc_gan_charger_65w",
-    "name": "AeroFast 65W GaN Dual USB-C Ultra-Compact Fast Charger",
-    "category": "mobile_accessories",
-    "price": 1499.0,
-    "currency": "INR",
-    "inventory": 85,
-    "rating": 4.85,
-    "review_count": 340,
-    "shipping_eta_hours": 12,
-    "tags": [
-      "charger",
-      "gan_charger",
-      "65w",
-      "fast_charging",
-      "usb_c",
-      "phone_accessory"
-    ],
-    "specs": {
-      "power": "65W GaN III Technology",
-      "ports": "2x USB-C PD 3.0 + 1x USB-A QC 4.0",
-      "safety": "Temperature Control & Over-voltage Protection"
-    },
-    "complementary_product_ids": [
-      "sku_phone_zenfone_10_compact",
-      "sku_phone_pixel_8a_compact"
-    ],
-    "image_url": "https://images.unsplash.com/photo-1583863788434-e58a36330cf0?w=600&auto=format&fit=crop&q=80",
-    "description": "Pocket-sized 65W Gallium Nitride fast charger capable of charging phones, tablets, and laptops simultaneously."
-  },
-  {
-    "id": "sku_acc_mag_case_glass",
-    "name": "AeroGuard Magnetic Armor Case + 9H Tempered Glass Screen Protector",
-    "category": "mobile_accessories",
-    "price": 799.0,
-    "currency": "INR",
-    "inventory": 110,
-    "rating": 4.75,
-    "review_count": 290,
-    "shipping_eta_hours": 12,
-    "tags": [
-      "phone_case",
-      "screen_protector",
-      "tempered_glass",
-      "magsafe",
-      "drop_protection"
-    ],
-    "specs": {
-      "material": "Shock-absorbing TPU + Matte Polycarbonate",
-      "magnets": "N52 Strong Magnetic Ring",
-      "glass": "9H Hardness Edge-to-Edge"
-    },
-    "complementary_product_ids": [
-      "sku_phone_pixel_8a_compact",
-      "sku_phone_galaxy_s23_compact"
-    ],
-    "image_url": "https://images.unsplash.com/photo-1601784551446-20c9e07cdbdb?w=600&auto=format&fit=crop&q=80",
-    "description": "Military-grade drop protection case with embedded magnetic charging ring and oleophobic 9H tempered glass."
+    "image_url": "https://images.unsplash.com/photo-1586350977771-b3b0abd50c82?w=600&auto=format&fit=crop&q=80",
+    "description": "Targeted compression running socks engineered to eliminate friction blisters during distance runs."
   },
   {
     "id": "sku_kb_keychron_k2",
@@ -217,7 +244,8 @@
       "hot_swappable",
       "mac_windows",
       "rgb",
-      "brown_switch"
+      "brown_switch",
+      "typing"
     ],
     "specs": {
       "switches": "Gateron G Pro Brown",
@@ -551,5 +579,135 @@
     ],
     "image_url": "https://images.unsplash.com/photo-1544716278-ca5e3f4abd8c?w=600&auto=format&fit=crop&q=80",
     "description": "High speed 100W Power Delivery 11-in-1 multi-port docking station for multi-monitor developer setups."
+  },
+  {
+    "id": "sku_phone_zenfone_10_compact",
+    "name": "Asus Zenfone 10 Compact Flagship (5.9\" 144Hz AMOLED)",
+    "category": "smartphones",
+    "price": 48499.0,
+    "currency": "INR",
+    "inventory": 18,
+    "rating": 4.9,
+    "review_count": 215,
+    "shipping_eta_hours": 24,
+    "tags": [
+      "smartphone",
+      "phone",
+      "mobile",
+      "small_display",
+      "compact_phone",
+      "small_screen",
+      "5.9_inch",
+      "snapdragon_8_gen_2",
+      "one_hand"
+    ],
+    "specs": {
+      "display": "5.9-inch 144Hz HDR10+ Compact AMOLED (146.5 x 68.1 mm)",
+      "processor": "Qualcomm Snapdragon 8 Gen 2 (4nm)",
+      "ram_storage": "8GB LPDDR5X + 256GB UFS 4.0",
+      "camera": "50MP Sony IMX766 with 6-Axis Hybrid Gimbal Stabilizer 2.0",
+      "battery": "4300mAh with 30W HyperCharge + 15W Wireless Charging"
+    },
+    "complementary_product_ids": [
+      "sku_acc_gan_charger_65w",
+      "sku_acc_mag_case_glass"
+    ],
+    "image_url": "https://images.unsplash.com/photo-1598327105666-5b89351aff97?w=600&auto=format&fit=crop&q=80",
+    "description": "The ultimate pocket-sized flagship smartphone with a 5.9-inch compact display, flagship Snapdragon 8 Gen 2, and 6-axis gimbal stabilization."
+  },
+  {
+    "id": "sku_phone_pixel_8a_compact",
+    "name": "Google Pixel 8a 5G (6.1\" Actua OLED Compact Display)",
+    "category": "smartphones",
+    "price": 42999.0,
+    "currency": "INR",
+    "inventory": 24,
+    "rating": 4.8,
+    "review_count": 480,
+    "shipping_eta_hours": 24,
+    "tags": [
+      "smartphone",
+      "phone",
+      "mobile",
+      "small_display",
+      "compact_phone",
+      "google_pixel",
+      "pixel_8a",
+      "ai_phone",
+      "6.1_inch",
+      "oled"
+    ],
+    "specs": {
+      "display": "6.1-inch Actua OLED 120Hz (Up to 2000 nits peak)",
+      "processor": "Google Tensor G3 with Titan M2 security coprocessor",
+      "ram_storage": "8GB RAM + 128GB Storage",
+      "camera": "64MP Quad PD wide + 13MP ultrawide with Best Take & Magic Editor",
+      "battery": "4492mAh with 24-hour battery life and Fast Charging"
+    },
+    "complementary_product_ids": [
+      "sku_acc_gan_charger_65w",
+      "sku_audio_anc_headset"
+    ],
+    "image_url": "https://images.unsplash.com/photo-1511707171634-5f897ff02aa9?w=600&auto=format&fit=crop&q=80",
+    "description": "Compact 6.1-inch Google AI-powered phone with incredible camera performance and 7 years of OS updates."
+  },
+  {
+    "id": "sku_acc_gan_charger_65w",
+    "name": "AeroFast 65W GaN Dual USB-C Ultra-Compact Fast Charger",
+    "category": "mobile_accessories",
+    "price": 1499.0,
+    "currency": "INR",
+    "inventory": 85,
+    "rating": 4.85,
+    "review_count": 340,
+    "shipping_eta_hours": 12,
+    "tags": [
+      "charger",
+      "gan_charger",
+      "65w",
+      "fast_charging",
+      "usb_c",
+      "phone_accessory"
+    ],
+    "specs": {
+      "power": "65W GaN III Technology",
+      "ports": "2x USB-C PD 3.0 + 1x USB-A QC 4.0",
+      "safety": "Temperature Control & Over-voltage Protection"
+    },
+    "complementary_product_ids": [
+      "sku_phone_zenfone_10_compact",
+      "sku_phone_pixel_8a_compact"
+    ],
+    "image_url": "https://images.unsplash.com/photo-1583863788434-e58a36330cf0?w=600&auto=format&fit=crop&q=80",
+    "description": "Pocket-sized 65W Gallium Nitride fast charger capable of charging phones, tablets, and laptops simultaneously."
+  },
+  {
+    "id": "sku_acc_mag_case_glass",
+    "name": "AeroGuard Magnetic Armor Case + 9H Tempered Glass Screen Protector",
+    "category": "mobile_accessories",
+    "price": 799.0,
+    "currency": "INR",
+    "inventory": 110,
+    "rating": 4.75,
+    "review_count": 290,
+    "shipping_eta_hours": 12,
+    "tags": [
+      "phone_case",
+      "screen_protector",
+      "tempered_glass",
+      "magsafe",
+      "drop_protection"
+    ],
+    "specs": {
+      "material": "Shock-absorbing TPU + Matte Polycarbonate",
+      "magnets": "N52 Strong Magnetic Ring",
+      "glass": "9H Hardness Edge-to-Edge"
+    },
+    "complementary_product_ids": [
+      "sku_phone_pixel_8a_compact",
+      "sku_phone_zenfone_10_compact"
+    ],
+    "image_url": "https://images.unsplash.com/photo-1601784551446-20c9e07cdbdb?w=600&auto=format&fit=crop&q=80",
+    "description": "Military-grade drop protection case with embedded magnetic charging ring and oleophobic 9H tempered glass."
   }
 ]

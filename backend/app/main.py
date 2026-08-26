@@ -8,6 +8,7 @@ from backend.app.api.guardrails import router as guardrails_router
 from backend.app.api.webhooks import router as webhooks_router
 from backend.app.api.audit import router as audit_router
 from backend.app.api.scenarios import router as scenarios_router
+from backend.app.api.payments import router as payments_router
 
 app = FastAPI(
     title=settings.PROJECT_NAME,
@@ -31,6 +32,7 @@ app.include_router(guardrails_router, prefix=settings.API_V1_STR)
 app.include_router(webhooks_router, prefix=settings.API_V1_STR)
 app.include_router(audit_router, prefix=settings.API_V1_STR)
 app.include_router(scenarios_router, prefix=settings.API_V1_STR)
+app.include_router(payments_router, prefix=settings.API_V1_STR)
 
 @app.get("/health")
 def healthcheck():

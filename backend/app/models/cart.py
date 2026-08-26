@@ -37,9 +37,11 @@ class Cart(BaseModel):
     currency: str = "INR"
 
     def recalculate(self):
-        self.subtotal = sum(item.subtotal for item in self.items)
+        # A caller-provided subtotal is not trusted for policy or payment
+        # decisions. Price and quantity are the authoritative inputs.
+        self.subtotal = round(sum(item.price * item.quantity for item in self.items), 2)
         if self.applied_bundle:
             self.discount_amount = self.applied_bundle.savings_amount
         else:
             self.discount_amount = 0.0
-        self.total_amount = max(0.0, self.subtotal - self.discount_amount + self.shipping_fee)
+        self.total_amount = round(max(0.0, self.subtotal - self.discount_amount + self.shipping_fee), 2)

@@ -15,6 +15,32 @@ async def test_workflow_catalog_discovery():
     assert res["upsell_bundle"] is not None
 
 @pytest.mark.anyio
+async def test_workflow_peanut_butter_highest_protein_query():
+    # User intent: "best available peanut butter with highest protein % under 700rs"
+    res = await commerce_workflow.run(
+        user_message="best available peanut butter with highest protein % under 700rs",
+        user_id="test_buyer_01"
+    )
+    assert res["type"] == "CATALOG_DISCOVERY"
+    assert len(res["products"]) >= 1
+    # Pintola with 36% Protein Isolate must be top recommendation
+    assert "Pintola" in res["top_choice"]["name"]
+    assert res["top_choice"]["price"] <= 700.0
+    assert "36%" in res["top_choice"]["specs"]["protein_percentage"]
+    assert res["upsell_bundle"] is not None
+
+@pytest.mark.anyio
+async def test_workflow_running_shoes_query():
+    res = await commerce_workflow.run(
+        user_message="Find me running shoes for long distance under 5000 rs",
+        user_id="test_buyer_01"
+    )
+    assert res["type"] == "CATALOG_DISCOVERY"
+    assert len(res["products"]) >= 1
+    assert "Nike" in res["top_choice"]["name"]
+    assert res["top_choice"]["price"] <= 5000.0
+
+@pytest.mark.anyio
 async def test_workflow_guardrail_denial():
     # Attempting to buy ₹7,999 keyboard with ₹5,000 spend limit
     res = await commerce_workflow.run(
@@ -60,3 +86,13 @@ async def test_workflow_direct_order_within_limits():
     assert res["type"] == "ORDER_CREATED"
     assert res["order"] is not None
     assert res["order"]["amount"] == 1899.0
+
+@pytest.mark.anyio
+async def test_workflow_delegates_checkout_to_policy_agent():
+    res = await commerce_workflow.run(
+        user_message="Buy AeroGrip Ergonomic Wireless Vertical Mouse",
+        user_id="test_multi_agent_buyer"
+    )
+    assert res["type"] == "ORDER_CREATED"
+    agents = [step["agent_name"] for step in res["reasoning_steps"]]
+    assert agents == ["Checkout Agent", "Guardrail & Policy Agent"]

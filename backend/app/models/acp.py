@@ -35,6 +35,7 @@ class ACPQuoteResponse(BaseModel):
     currency: str = "INR"
     guardrail_precheck: str # "PASS" or "DENIED"
     expires_in_seconds: int = 300
+    expires_at: str
 
 class ACPCheckoutRequest(BaseModel):
     quote_id: str

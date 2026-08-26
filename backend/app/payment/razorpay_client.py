@@ -6,7 +6,7 @@ from backend.app.models.order import RazorpayOrder, PaymentCaptureResult, Refund
 class RazorpayClientWrapper:
     def __init__(self):
         self.key_id = settings.RAZORPAY_KEY_ID
-        self.key_secret = settings.RAZORPAY_KEY_SECRET
+        self.key_secret = settings.RAZORPAY_KEY_SECRET or settings.AUDIT_HMAC_SECRET
         self.webhook_secret = settings.RAZORPAY_WEBHOOK_SECRET
         self._orders_db: Dict[str, RazorpayOrder] = {}
         self._payments_db: Dict[str, PaymentCaptureResult] = {}
@@ -19,6 +19,8 @@ class RazorpayClientWrapper:
         idempotency_key: Optional[str] = None,
         notes: Optional[Dict[str, str]] = None
     ) -> RazorpayOrder:
+        if amount_inr <= 0:
+            raise ValueError("Order amount must be positive")
         order_id = f"order_{uuid.uuid4().hex[:14]}"
         receipt = f"rcpt_{uuid.uuid4().hex[:8]}"
         amount_in_paise = int(amount_inr * 100)
@@ -46,6 +48,10 @@ class RazorpayClientWrapper:
         force_fail: bool = False
     ) -> PaymentCaptureResult:
         order = self._orders_db.get(order_id)
+        if not order:
+            raise ValueError(f"Unknown order {order_id}")
+        if amount_inr != order.amount:
+            raise ValueError("Payment amount must exactly match the authorized order amount")
         payment_id = f"pay_{uuid.uuid4().hex[:14]}"
 
         if force_fail:
@@ -60,8 +66,7 @@ class RazorpayClientWrapper:
                 error_description="Card/UPI payment authorization declined by issuing bank."
             )
             self._payments_db[payment_id] = res
-            if order:
-                order.state = TransactionState.PAYMENT_FAILED
+            order.state = TransactionState.PAYMENT_FAILED
             return res
 
         payload_str = f"{order_id}|{payment_id}"
@@ -78,12 +83,34 @@ class RazorpayClientWrapper:
             status="captured",
             method=method,
             razorpay_signature=sig,
-            webhook_verified=True
+            # A gateway response is not the source of truth. The webhook
+            # handler marks this record verified after HMAC validation.
+            webhook_verified=False
         )
         self._payments_db[payment_id] = res
-        if order:
-            order.state = TransactionState.PAYMENT_CAPTURED
+        order.state = TransactionState.PAYMENT_CAPTURED
         return res
+
+    def reconcile_verified_payment(self, order_id: str, payment_id: str, amount_inr: float) -> Optional[str]:
+        """Apply an authenticated webhook event and return its buyer id."""
+        order = self._orders_db.get(order_id)
+        if not order or order.amount != amount_inr:
+            return None
+        payment = self._payments_db.get(payment_id)
+        if payment:
+            if payment.webhook_verified:
+                # Razorpay can retry webhooks. A verified event must never
+                # increase the session spend counter a second time.
+                return None
+            payment.webhook_verified = True
+            payment.status = "captured"
+        else:
+            self._payments_db[payment_id] = PaymentCaptureResult(
+                payment_id=payment_id, order_id=order_id, amount=amount_inr,
+                status="captured", webhook_verified=True
+            )
+        order.state = TransactionState.COMPLETED
+        return order.notes.get("user_id")
 
     def process_refund(
         self,

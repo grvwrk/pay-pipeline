@@ -148,18 +148,18 @@ class DeterministicPolicyEngine:
 
         # Rule 5: Max Item Quantity Cap
         for item in cart.items:
-            if item.quantity > self.config.max_item_quantity:
+            if item.quantity < 1 or item.quantity > self.config.max_item_quantity:
                 rule_evaluations.append(PolicyRuleEvaluation(
                     rule_name="quantity_cap",
                     passed=False,
-                    description=f"Item quantity {item.quantity} exceeds maximum allowed {self.config.max_item_quantity}.",
+                    description=f"Item quantity {item.quantity} is outside the allowed range 1-{self.config.max_item_quantity}.",
                     threshold_value=self.config.max_item_quantity,
                     actual_value=item.quantity
                 ))
                 return PolicyEvaluationResult(
                     allowed=False,
                     decision_code=DecisionCode.DENIED_QUANTITY_EXCEEDED,
-                    reason=f"Item quantity {item.quantity} exceeds limit of {self.config.max_item_quantity}.",
+                    reason=f"Item quantity {item.quantity} is outside the allowed range 1-{self.config.max_item_quantity}.",
                     requires_human_approval=False,
                     rule_evaluations=rule_evaluations,
                     bounded_amount=amount,

@@ -46,6 +46,9 @@ class GuardrailConfig(BaseModel):
         "workspace_accessories",
         "developer_gear",
         "ergonomics",
-        "audio_equipment"
+        "audio_equipment",
+        "nutrition_and_fitness",
+        "running_shoes",
+        "health_and_groceries"
     ]
     merchant_whitelist: List[str] = ["merch_aeropay_electronics_01"]
