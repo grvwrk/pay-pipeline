@@ -1,12 +1,7 @@
 ﻿# pay-pipeline
-> Powered by LlamaIndex Workflows, Deterministic Guardrails, and Razorpay Test Rails.
 
-[![LlamaIndex Workflow](https://img.shields.io/badge/Workflow-LlamaIndex-blue)](https://www.llamaindex.ai/)
-[![Razorpay Test Mode](https://img.shields.io/badge/Payment-Razorpay%20Test%20Mode-blueviolet)](https://razorpay.com/)
-[![Audit](https://img.shields.io/badge/Audit-SHA--256%20Hash%20Chain-emerald)](https://github.com)
-[![Protocol](https://img.shields.io/badge/Protocol-ACP%20%2F%20MCP%20Ready-cyan)](https://github.com)
 
-AeroPay addresses the two foundational challenges of agentic commerce:
+this addresses the two foundational challenges of agentic commerce:
 1. **Grow Merchant Revenue (AI Salesmanship)**: Autonomous intent classification, complementary product affinity matching, dynamic bundle discounts, and merchant campaign orchestration.
 2. **Make Merchants Sellable to AI Buyers (Machine Transactable)**: Machine-readable catalog schemas, Agentic Commerce Protocol (ACP / AP2) endpoints, and Model Context Protocol (MCP) tool integration.
 3. **The Bar (Explainable, Bounded, Gated)**: A deterministic, model-independent policy engine enforcing hard spend limits (₹5,000 max), INR currency bounds, quantity caps, gated human approval for orders > ₹3,000, and a tamper-evident SHA-256 hash-chained cryptographic audit log.
