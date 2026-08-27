@@ -279,6 +279,9 @@ class RazorpayClientWrapper:
         target_state = state_machine.transition(order.state, TransactionState.COMPLETED)
         order_repo.update_order_state(order_id, "paid", target_state, db=db)
         
+        user_id = order.notes.get("user_id") if order.notes else None
+        user_id = user_id or "user_default_buyer"
+
         # Ensure payment record exists (mandatory for webhook captures in live mode)
         payment = payment_repo.get_payment(payment_id, db=db)
         if not payment:
@@ -291,12 +294,11 @@ class RazorpayClientWrapper:
                 method="webhook",
                 webhook_verified=True
             )
-            payment_repo.record_payment(capture_res, user_id=order.user_id, db=db)
+            payment_repo.record_payment(capture_res, user_id=user_id, db=db)
         else:
             payment_repo.update_status(payment_id, "captured", db=db)
 
-        user_id = order.notes.get("user_id") if order.notes else None
-        return user_id or "user_default_buyer"
+        return user_id
 
 
 razorpay_client = RazorpayClientWrapper()
