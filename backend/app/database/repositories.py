@@ -31,19 +31,28 @@ def _product_model_to_domain(pm: ProductModel) -> Product:
 
 
 class ProductRepository:
-    def get_all(self) -> List[Product]:
-        with SessionLocal() as db:
-            models = db.query(ProductModel).all()
+    def get_all(self, db: Optional[Session] = None) -> List[Product]:
+        s = db or SessionLocal()
+        try:
+            models = s.query(ProductModel).all()
             return [_product_model_to_domain(m) for m in models]
+        finally:
+            if not db:
+                s.close()
 
-    def get_by_id(self, product_id: str) -> Optional[Product]:
-        with SessionLocal() as db:
-            pm = db.query(ProductModel).filter(ProductModel.id == product_id).first()
+    def get_by_id(self, product_id: str, db: Optional[Session] = None) -> Optional[Product]:
+        s = db or SessionLocal()
+        try:
+            pm = s.query(ProductModel).filter(ProductModel.id == product_id).first()
             return _product_model_to_domain(pm) if pm else None
+        finally:
+            if not db:
+                s.close()
 
-    def filter_products(self, filter_params: ProductFilter) -> List[Product]:
-        with SessionLocal() as db:
-            query = db.query(ProductModel)
+    def filter_products(self, filter_params: ProductFilter, db: Optional[Session] = None) -> List[Product]:
+        s = db or SessionLocal()
+        try:
+            query = s.query(ProductModel)
 
             if filter_params.in_stock_only:
                 query = query.filter(ProductModel.inventory > 0)
@@ -97,42 +106,71 @@ class ProductRepository:
                 return [item[1] for item in scored_items]
 
             return candidates
+        finally:
+            if not db:
+                s.close()
 
-    def decrement_inventory(self, product_id: str, quantity: int = 1) -> bool:
-        with SessionLocal() as db:
-            pm = db.query(ProductModel).filter(ProductModel.id == product_id).first()
-            if pm and pm.inventory >= quantity:
-                pm.inventory -= quantity
-                db.commit()
-                return True
-            return False
+    def decrement_inventory(self, product_id: str, quantity: int = 1, db: Optional[Session] = None) -> bool:
+        """Atomic SQL decrement preventing concurrency overselling."""
+        s = db or SessionLocal()
+        try:
+            rows_updated = s.query(ProductModel).filter(
+                ProductModel.id == product_id,
+                ProductModel.inventory >= quantity
+            ).update(
+                {ProductModel.inventory: ProductModel.inventory - quantity},
+                synchronize_session=False
+            )
+            if not db:
+                s.commit()
+            return rows_updated > 0
+        except Exception:
+            if not db:
+                s.rollback()
+            raise
+        finally:
+            if not db:
+                s.close()
 
-    def increment_inventory(self, product_id: str, quantity: int = 1) -> bool:
-        with SessionLocal() as db:
-            pm = db.query(ProductModel).filter(ProductModel.id == product_id).first()
-            if pm:
-                pm.inventory += quantity
-                db.commit()
-                return True
-            return False
+    def increment_inventory(self, product_id: str, quantity: int = 1, db: Optional[Session] = None) -> bool:
+        """Atomic SQL increment."""
+        s = db or SessionLocal()
+        try:
+            rows_updated = s.query(ProductModel).filter(
+                ProductModel.id == product_id
+            ).update(
+                {ProductModel.inventory: ProductModel.inventory + quantity},
+                synchronize_session=False
+            )
+            if not db:
+                s.commit()
+            return rows_updated > 0
+        except Exception:
+            if not db:
+                s.rollback()
+            raise
+        finally:
+            if not db:
+                s.close()
 
 
 class CartRepository:
-    def get_cart(self, cart_id: str) -> Optional[Cart]:
-        with SessionLocal() as db:
-            cm = db.query(CartModel).filter(CartModel.cart_id == cart_id).first()
+    def get_cart(self, cart_id: str, db: Optional[Session] = None) -> Optional[Cart]:
+        s = db or SessionLocal()
+        try:
+            cm = s.query(CartModel).filter(CartModel.cart_id == cart_id).first()
             if not cm:
                 return None
-            items = []
-            for im in cm.items:
-                items.append(CartItem(
+            items = [
+                CartItem(
                     product_id=im.product_id,
                     name=im.name,
                     price=im.price,
                     quantity=im.quantity,
                     subtotal=im.subtotal,
                     category=im.category
-                ))
+                ) for im in cm.items
+            ]
             bundle = None
             if cm.applied_bundle_json:
                 try:
@@ -140,7 +178,7 @@ class CartRepository:
                 except Exception:
                     bundle = None
 
-            cart = Cart(
+            return Cart(
                 cart_id=cm.cart_id,
                 user_id=cm.user_id,
                 currency=cm.currency,
@@ -150,12 +188,15 @@ class CartRepository:
                 total_amount=cm.total_amount,
                 applied_bundle=bundle
             )
-            return cart
+        finally:
+            if not db:
+                s.close()
 
-    def save_cart(self, cart: Cart) -> Cart:
+    def save_cart(self, cart: Cart, db: Optional[Session] = None) -> Cart:
         cart.recalculate()
-        with SessionLocal() as db:
-            cm = db.query(CartModel).filter(CartModel.cart_id == cart.cart_id).first()
+        s = db or SessionLocal()
+        try:
+            cm = s.query(CartModel).filter(CartModel.cart_id == cart.cart_id).first()
             if not cm:
                 cm = CartModel(
                     cart_id=cart.cart_id,
@@ -166,7 +207,7 @@ class CartRepository:
                     total_amount=cart.total_amount,
                     applied_bundle_json=cart.applied_bundle.model_dump_json() if cart.applied_bundle else None
                 )
-                db.add(cm)
+                s.add(cm)
             else:
                 cm.user_id = cart.user_id
                 cm.currency = cart.currency
@@ -174,8 +215,7 @@ class CartRepository:
                 cm.discount_amount = cart.discount_amount
                 cm.total_amount = cart.total_amount
                 cm.applied_bundle_json = cart.applied_bundle.model_dump_json() if cart.applied_bundle else None
-                # Clear existing items
-                db.query(CartItemModel).filter(CartItemModel.cart_id == cart.cart_id).delete()
+                s.query(CartItemModel).filter(CartItemModel.cart_id == cart.cart_id).delete()
 
             for item in cart.items:
                 im = CartItemModel(
@@ -187,15 +227,24 @@ class CartRepository:
                     subtotal=item.subtotal,
                     category=item.category
                 )
-                db.add(im)
+                s.add(im)
 
-            db.commit()
+            if not db:
+                s.commit()
             return cart
+        except Exception:
+            if not db:
+                s.rollback()
+            raise
+        finally:
+            if not db:
+                s.close()
 
 
 class OrderRepository:
-    def create_order(self, order: RazorpayOrder) -> RazorpayOrder:
-        with SessionLocal() as db:
+    def create_order(self, order: RazorpayOrder, db: Optional[Session] = None) -> RazorpayOrder:
+        s = db or SessionLocal()
+        try:
             om = OrderModel(
                 order_id=order.order_id,
                 cart_id=order.cart_id,
@@ -209,13 +258,22 @@ class OrderRepository:
                 notes_json=json.dumps(order.notes or {}),
                 idempotency_key=order.idempotency_key
             )
-            db.merge(om)
-            db.commit()
+            s.merge(om)
+            if not db:
+                s.commit()
             return order
+        except Exception:
+            if not db:
+                s.rollback()
+            raise
+        finally:
+            if not db:
+                s.close()
 
-    def get_order(self, order_id: str) -> Optional[RazorpayOrder]:
-        with SessionLocal() as db:
-            om = db.query(OrderModel).filter(OrderModel.order_id == order_id).first()
+    def get_order(self, order_id: str, db: Optional[Session] = None) -> Optional[RazorpayOrder]:
+        s = db or SessionLocal()
+        try:
+            om = s.query(OrderModel).filter(OrderModel.order_id == order_id).first()
             if not om:
                 return None
             return RazorpayOrder(
@@ -230,40 +288,34 @@ class OrderRepository:
                 state=TransactionState(om.state) if om.state in TransactionState._value2member_map_ else TransactionState.ORDER_CREATED,
                 idempotency_key=om.idempotency_key
             )
+        finally:
+            if not db:
+                s.close()
 
-    def update_order_state(self, order_id: str, status: str, state: TransactionState) -> Optional[RazorpayOrder]:
-        with SessionLocal() as db:
-            om = db.query(OrderModel).filter(OrderModel.order_id == order_id).first()
+    def update_order_state(self, order_id: str, status: str, state: TransactionState, db: Optional[Session] = None) -> Optional[RazorpayOrder]:
+        s = db or SessionLocal()
+        try:
+            om = s.query(OrderModel).filter(OrderModel.order_id == order_id).first()
             if om:
                 om.status = status
                 om.state = state.value if isinstance(state, TransactionState) else str(state)
-                db.commit()
-                return self.get_order(order_id)
+                if not db:
+                    s.commit()
+                return self.get_order(order_id, db=s)
             return None
-
-    def list_orders(self, limit: int = 50) -> List[RazorpayOrder]:
-        with SessionLocal() as db:
-            models = db.query(OrderModel).order_by(OrderModel.created_at.desc()).limit(limit).all()
-            res = []
-            for om in models:
-                res.append(RazorpayOrder(
-                    order_id=om.order_id,
-                    cart_id=om.cart_id,
-                    amount=om.amount,
-                    amount_in_paise=om.amount_in_paise,
-                    currency=om.currency,
-                    status=om.status,
-                    receipt=om.receipt or "",
-                    notes=om.notes,
-                    state=TransactionState(om.state) if om.state in TransactionState._value2member_map_ else TransactionState.ORDER_CREATED,
-                    idempotency_key=om.idempotency_key
-                ))
-            return res
+        except Exception:
+            if not db:
+                s.rollback()
+            raise
+        finally:
+            if not db:
+                s.close()
 
 
 class PaymentRepository:
-    def record_payment(self, payment: PaymentCaptureResult, user_id: str = "user_default_buyer") -> PaymentCaptureResult:
-        with SessionLocal() as db:
+    def record_payment(self, payment: PaymentCaptureResult, user_id: str = "user_default_buyer", db: Optional[Session] = None) -> PaymentCaptureResult:
+        s = db or SessionLocal()
+        try:
             pm = PaymentModel(
                 payment_id=payment.payment_id,
                 order_id=payment.order_id,
@@ -276,13 +328,22 @@ class PaymentRepository:
                 error_description=payment.error_description,
                 verified_at=datetime.now(timezone.utc) if payment.status == "captured" else None
             )
-            db.merge(pm)
-            db.commit()
+            s.merge(pm)
+            if not db:
+                s.commit()
             return payment
+        except Exception:
+            if not db:
+                s.rollback()
+            raise
+        finally:
+            if not db:
+                s.close()
 
-    def get_payment(self, payment_id: str) -> Optional[PaymentCaptureResult]:
-        with SessionLocal() as db:
-            pm = db.query(PaymentModel).filter(PaymentModel.payment_id == payment_id).first()
+    def get_payment(self, payment_id: str, db: Optional[Session] = None) -> Optional[PaymentCaptureResult]:
+        s = db or SessionLocal()
+        try:
+            pm = s.query(PaymentModel).filter(PaymentModel.payment_id == payment_id).first()
             if not pm:
                 return None
             return PaymentCaptureResult(
@@ -295,10 +356,14 @@ class PaymentRepository:
                 error_code=pm.error_code,
                 error_description=pm.error_description
             )
+        finally:
+            if not db:
+                s.close()
 
-    def update_status(self, payment_id: str, status: str, error_code: Optional[str] = None, error_desc: Optional[str] = None) -> Optional[PaymentCaptureResult]:
-        with SessionLocal() as db:
-            pm = db.query(PaymentModel).filter(PaymentModel.payment_id == payment_id).first()
+    def update_status(self, payment_id: str, status: str, error_code: Optional[str] = None, error_desc: Optional[str] = None, db: Optional[Session] = None) -> Optional[PaymentCaptureResult]:
+        s = db or SessionLocal()
+        try:
+            pm = s.query(PaymentModel).filter(PaymentModel.payment_id == payment_id).first()
             if pm:
                 pm.status = status
                 if error_code:
@@ -307,209 +372,109 @@ class PaymentRepository:
                     pm.error_description = error_desc
                 if status == "captured":
                     pm.verified_at = datetime.now(timezone.utc)
-                db.commit()
-                return self.get_payment(payment_id)
+                if not db:
+                    s.commit()
+                return self.get_payment(payment_id, db=s)
             return None
+        except Exception:
+            if not db:
+                s.rollback()
+            raise
+        finally:
+            if not db:
+                s.close()
 
 
 class RefundRepository:
-    def create_refund(self, refund: RefundResult, user_id: str = "user_default_buyer") -> RefundResult:
-        with SessionLocal() as db:
+    def create_refund(self, refund: RefundResult, user_id: str = "user_default_buyer", db: Optional[Session] = None) -> RefundResult:
+        s = db or SessionLocal()
+        try:
             rm = RefundModel(
                 refund_id=refund.refund_id,
                 payment_id=refund.payment_id,
-                order_id=None,
+                order_id=refund.order_id,
                 user_id=user_id,
                 amount=refund.amount,
                 currency=refund.currency,
                 status=refund.status
             )
-            db.merge(rm)
-            db.commit()
+            s.merge(rm)
+            if not db:
+                s.commit()
             return refund
-
-    def get_refund(self, refund_id: str) -> Optional[RefundResult]:
-        with SessionLocal() as db:
-            rm = db.query(RefundModel).filter(RefundModel.refund_id == refund_id).first()
-            if not rm:
-                return None
-            return RefundResult(
-                refund_id=rm.refund_id,
-                payment_id=rm.payment_id,
-                amount=rm.amount,
-                currency=rm.currency,
-                status=rm.status
-            )
-
-    def get_total_refunded(self, payment_id: str) -> float:
-        with SessionLocal() as db:
-            records = db.query(RefundModel).filter(
-                RefundModel.payment_id == payment_id,
-                RefundModel.status == "processed"
-            ).all()
-            return sum(r.amount for r in records)
+        except Exception:
+            if not db:
+                s.rollback()
+            raise
+        finally:
+            if not db:
+                s.close()
 
 
 class ApprovalRepository:
-    def create_approval(self, token: str, user_id: str, amount: float, cart_id: Optional[str] = None, reason: Optional[str] = None):
-        with SessionLocal() as db:
-            app = ApprovalModel(
-                token=token,
-                user_id=user_id,
-                amount=amount,
-                cart_id=cart_id,
-                reason=reason,
-                status="PENDING"
-            )
-            db.merge(app)
-            db.commit()
-
-    def register_approval(self, token: str) -> bool:
-        with SessionLocal() as db:
-            app = db.query(ApprovalModel).filter(ApprovalModel.token == token).first()
-            if app:
-                app.status = "APPROVED"
-                app.approved_at = datetime.now(timezone.utc)
-                db.commit()
-                return True
-            else:
-                # Direct registration
-                app = ApprovalModel(
-                    token=token,
-                    user_id="user_default_buyer",
-                    amount=0.0,
-                    status="APPROVED",
-                    approved_at=datetime.now(timezone.utc)
-                )
-                db.add(app)
-                db.commit()
-                return True
-
-    def is_approved(self, token: str) -> bool:
-        with SessionLocal() as db:
-            app = db.query(ApprovalModel).filter(ApprovalModel.token == token).first()
-            return bool(app and app.status == "APPROVED")
-
-
-class AuditRepository:
-    def save_record(self, record: AuditRecord) -> AuditRecord:
-        with SessionLocal() as db:
-            arm = AuditRecordModel(
-                index=record.index,
-                event_id=record.event_id,
-                timestamp=record.timestamp,
-                prev_hash=record.prev_hash,
-                record_hash=record.record_hash,
-                actor_id=record.actor_id,
-                actor_role=record.actor_role,
-                action=record.action,
-                intent=record.intent,
-                tool_name=record.tool_name,
-                arguments_json=json.dumps(record.arguments or {}),
-                guardrail_decision=record.guardrail_decision,
-                approval_required=record.approval_required,
-                transaction_state=record.transaction_state,
-                result_status=record.result_status,
-                signature=record.signature,
-                latency_ms=getattr(record, "latency_ms", 0.0) or 0.0,
-                explainability_notes=record.explainability_notes or ""
-            )
-            db.merge(arm)
-            db.commit()
-            return record
-
-    def get_all(self) -> List[AuditRecord]:
-        with SessionLocal() as db:
-            models = db.query(AuditRecordModel).order_by(AuditRecordModel.index.asc()).all()
-            records = []
-            for m in models:
-                records.append(AuditRecord(
-                    index=m.index,
-                    timestamp=m.timestamp,
-                    event_id=m.event_id,
-                    prev_hash=m.prev_hash,
-                    record_hash=m.record_hash,
-                    actor_id=m.actor_id,
-                    actor_role=m.actor_role,
-                    action=m.action,
-                    intent=m.intent,
-                    tool_name=m.tool_name,
-                    arguments=json.loads(m.arguments_json or "{}"),
-                    guardrail_decision=m.guardrail_decision,
-                    approval_required=m.approval_required,
-                    transaction_state=m.transaction_state,
-                    result_status=m.result_status,
-                    signature=m.signature,
-                    explainability_notes=m.explainability_notes
-                ))
-            return records
-
-    def get_latest(self) -> Optional[AuditRecord]:
-        with SessionLocal() as db:
-            m = db.query(AuditRecordModel).order_by(AuditRecordModel.index.desc()).first()
-            if not m:
-                return None
-            return AuditRecord(
-                index=m.index,
-                timestamp=m.timestamp,
-                event_id=m.event_id,
-                prev_hash=m.prev_hash,
-                record_hash=m.record_hash,
-                actor_id=m.actor_id,
-                actor_role=m.actor_role,
-                action=m.action,
-                intent=m.intent,
-                tool_name=m.tool_name,
-                arguments=json.loads(m.arguments_json or "{}"),
-                guardrail_decision=m.guardrail_decision,
-                approval_required=m.approval_required,
-                transaction_state=m.transaction_state,
-                result_status=m.result_status,
-                signature=m.signature,
-                explainability_notes=m.explainability_notes
-            )
+    def is_approved(self, token: str, max_age_seconds: int = 900, db: Optional[Session] = None) -> bool:
+        """Validates approval and verifies token age against expiry limit."""
+        s = db or SessionLocal()
+        try:
+            app = s.query(ApprovalModel).filter(ApprovalModel.token == token).first()
+            if not app or app.status != "APPROVED":
+                return False
+            
+            # Verify expiry (TTL)
+            if app.approved_at:
+                now = datetime.now(timezone.utc)
+                app_time = app.approved_at if app.approved_at.tzinfo else app.approved_at.replace(tzinfo=timezone.utc)
+                if (now - app_time).total_seconds() > max_age_seconds:
+                    return False
+            return True
+        finally:
+            if not db:
+                s.close()
 
 
 class SpendRepository:
-    def get_user_cumulative_spend(self, user_id: str) -> float:
-        with SessionLocal() as db:
-            s = db.query(UserSpendModel).filter(UserSpendModel.user_id == user_id).first()
-            return s.cumulative_spend_inr if s else 0.0
-
-    def record_spend(self, user_id: str, amount: float):
-        with SessionLocal() as db:
-            s = db.query(UserSpendModel).filter(UserSpendModel.user_id == user_id).first()
-            if s:
-                s.cumulative_spend_inr += amount
+    def record_spend(self, user_id: str, amount: float, db: Optional[Session] = None):
+        """Atomic addition of user cumulative spend."""
+        s = db or SessionLocal()
+        try:
+            record = s.query(UserSpendModel).filter(UserSpendModel.user_id == user_id).first()
+            if record:
+                s.query(UserSpendModel).filter(UserSpendModel.user_id == user_id).update(
+                    {UserSpendModel.cumulative_spend_inr: UserSpendModel.cumulative_spend_inr + amount},
+                    synchronize_session=False
+                )
             else:
-                s = UserSpendModel(user_id=user_id, cumulative_spend_inr=amount)
-                db.add(s)
-            db.commit()
+                s.add(UserSpendModel(user_id=user_id, cumulative_spend_inr=amount))
+            if not db:
+                s.commit()
+        except Exception:
+            if not db:
+                s.rollback()
+            raise
+        finally:
+            if not db:
+                s.close()
 
-    def reset_spend(self, user_id: str):
-        with SessionLocal() as db:
-            s = db.query(UserSpendModel).filter(UserSpendModel.user_id == user_id).first()
-            if s:
-                s.cumulative_spend_inr = 0.0
-                db.commit()
-
-
-class IdempotencyRepository:
-    def check_key(self, key: str) -> Optional[Dict[str, Any]]:
-        with SessionLocal() as db:
-            im = db.query(IdempotencyModel).filter(IdempotencyModel.key == key).first()
-            if im:
-                try:
-                    return json.loads(im.response_json)
-                except Exception:
-                    return {}
-            return None
-
-    def register_key(self, key: str, data: Dict[str, Any]):
-        with SessionLocal() as db:
-            im = IdempotencyModel(key=key, response_json=json.dumps(data))
-            db.merge(im)
-            db.commit()
+    def decrement_spend(self, user_id: str, amount: float, db: Optional[Session] = None):
+        """Deducts refunded amounts from cumulative user spend total."""
+        s = db or SessionLocal()
+        try:
+            record = s.query(UserSpendModel).filter(UserSpendModel.user_id == user_id).first()
+            if record:
+                new_balance = max(0.0, record.cumulative_spend_inr - amount)
+                s.query(UserSpendModel).filter(UserSpendModel.user_id == user_id).update(
+                    {UserSpendModel.cumulative_spend_inr: new_balance},
+                    synchronize_session=False
+                )
+            if not db:
+                s.commit()
+        except Exception:
+            if not db:
+                s.rollback()
+            raise
+        finally:
+            if not db:
+                s.close()
 
 
 # Singleton repository instances
@@ -519,6 +484,4 @@ order_repo = OrderRepository()
 payment_repo = PaymentRepository()
 refund_repo = RefundRepository()
 approval_repo = ApprovalRepository()
-audit_repo = AuditRepository()
 spend_repo = SpendRepository()
-idempotency_repo = IdempotencyRepository()
