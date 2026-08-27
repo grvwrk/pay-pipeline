@@ -64,7 +64,8 @@ class AgenticCommerceWorkflow(Workflow):
 
         refund_amt = None
         if intent == "REFUND":
-            amt_m = re.search(r'(?:rs\.?|inr|₹)?\s*(\d[\d,.]*)', query)
+            # Strict regex requiring currency marker or contextual text
+            amt_m = re.search(r'(?:rs\.?|inr|₹)\s*(\d[\d,.]*)', query, re.IGNORECASE)
             if amt_m:
                 try:
                     refund_amt = float(amt_m.group(1).replace(",", ""))
@@ -124,7 +125,8 @@ class AgenticCommerceWorkflow(Workflow):
             return RefundRequestEvent(
                 payment_id=ev.payment_id,
                 refund_amount=ev.refund_amount,
-                user_id=ev.user_id
+                user_id=ev.user_id,
+                reason=f"User requested refund via chat: {ev.user_query}"
             )
         elif ev.intent in {"ORDER_STATUS", "PAYMENT_STATUS"}:
             return StatusQueryEvent(
@@ -146,7 +148,7 @@ class AgenticCommerceWorkflow(Workflow):
 
     @step
     async def approval_agent(self, ctx: Context, ev: ApprovalConfirmationEvent) -> CheckoutEvent:
-        policy_engine.register_human_approval(ev.approval_token)
+        await asyncio.to_thread(policy_engine.register_human_approval, ev.approval_token)
         return CheckoutEvent(
             user_id=ev.user_id,
             target_sku=ev.target_sku,
@@ -201,7 +203,7 @@ class AgenticCommerceWorkflow(Workflow):
                 "reasoning_steps": trace
             })
 
-        bundle = read_tools.calculate_upsell_bundle(ev.top_choice.id)
+        bundle = await asyncio.to_thread(read_tools.calculate_upsell_bundle, ev.top_choice.id)
         if bundle:
             trace.append(_trace("Upsell Agent", f"Identified high-affinity companion accessory for {ev.top_choice.name}.", "RECOMMEND_BUNDLE", tool_called="calculate_upsell_bundle", result_summary=f"Bundle discount saves ₹{bundle.savings_amount:,.2f}."))
 
@@ -225,9 +227,9 @@ class AgenticCommerceWorkflow(Workflow):
 
     @step
     async def checkout_agent(self, ctx: Context, ev: CheckoutEvent) -> Union[CheckoutCartEvent, StopEvent]:
-        product = read_tools.get_product(ev.target_sku) if ev.target_sku else None
+        product = await asyncio.to_thread(read_tools.get_product, ev.target_sku) if ev.target_sku else None
         if not product:
-            candidates = read_tools.catalog_lookup(ProductFilter(query=ev.query, max_price=ev.max_price))
+            candidates = await asyncio.to_thread(read_tools.catalog_lookup, ProductFilter(query=ev.query, max_price=ev.max_price))
             product = candidates[0] if candidates else None
 
         if not product:
@@ -237,7 +239,8 @@ class AgenticCommerceWorkflow(Workflow):
                 "reasoning_steps": [_trace("Checkout Agent", "No catalog item resolved for checkout.", "STOP")]
             })
 
-        cart = read_tools.build_cart(
+        cart = await asyncio.to_thread(
+            read_tools.build_cart,
             user_id=ev.user_id,
             items=[{"product_id": product.id, "quantity": 1, "include_bundle": ev.include_bundle}]
         )
@@ -254,7 +257,8 @@ class AgenticCommerceWorkflow(Workflow):
     @step
     async def policy_agent(self, ctx: Context, ev: CheckoutCartEvent) -> StopEvent:
         start_t = time.perf_counter()
-        result = money_tools.create_order_guarded(
+        result = await asyncio.to_thread(
+            money_tools.create_order_guarded,
             cart=ev.cart,
             user_id=ev.user_id,
             idempotency_key=ev.idempotency_key,
@@ -285,11 +289,14 @@ class AgenticCommerceWorkflow(Workflow):
                 "reasoning_steps": trace
             })
 
+        decision_code = result.get("decision_code")
+        code_val = decision_code.value if hasattr(decision_code, "value") else str(decision_code)
+
         trace.append(_trace("Guardrail & Policy Agent", result["reason"], "DENY", latency_ms=latency))
         return StopEvent(result={
             "type": "GUARDRAIL_DENIED",
             "message": f"Transaction blocked by deterministic policy: {result['reason']}",
-            "decision_code": result["decision_code"].value,
+            "decision_code": code_val,
             "cart": ev.cart.model_dump(),
             "policy_evaluation": result["policy_evaluation"],
             "reasoning_steps": trace
@@ -298,11 +305,13 @@ class AgenticCommerceWorkflow(Workflow):
     @step
     async def refund_agent(self, ctx: Context, ev: RefundRequestEvent) -> StopEvent:
         amt = ev.refund_amount or 0.0
-        res = money_tools.issue_refund_guarded(
+        reason = getattr(ev, "reason", "Customer requested refund")
+        res = await asyncio.to_thread(
+            money_tools.issue_refund_guarded,
             payment_id=ev.payment_id,
             amount_inr=amt,
             user_id=ev.user_id,
-            reason=ev.reason
+            reason=reason
         )
         if res.get("success"):
             return StopEvent(result={
@@ -320,19 +329,21 @@ class AgenticCommerceWorkflow(Workflow):
     @step
     async def status_agent(self, ctx: Context, ev: StatusQueryEvent) -> StopEvent:
         if ev.query_type == "ORDER":
-            order = read_tools.get_order_status(ev.entity_id)
+            order = await asyncio.to_thread(read_tools.get_order_status, ev.entity_id)
             if order:
+                amt = order.get('amount') or 0.0
                 return StopEvent(result={
                     "type": "ORDER_STATUS",
-                    "message": f"Order {ev.entity_id} status: {order.get('status')} (State: {order.get('state')}) for ₹{order.get('amount'):,.2f}.",
+                    "message": f"Order {ev.entity_id} status: {order.get('status')} (State: {order.get('state')}) for ₹{amt:,.2f}.",
                     "order": order
                 })
         else:
-            payment = read_tools.get_payment_status(ev.entity_id)
+            payment = await asyncio.to_thread(read_tools.get_payment_status, ev.entity_id)
             if payment:
+                amt = payment.get('amount') or 0.0
                 return StopEvent(result={
                     "type": "PAYMENT_STATUS",
-                    "message": f"Payment {ev.entity_id} status: {payment.get('status')} for ₹{payment.get('amount'):,.2f}.",
+                    "message": f"Payment {ev.entity_id} status: {payment.get('status')} for ₹{amt:,.2f}.",
                     "payment": payment
                 })
 
