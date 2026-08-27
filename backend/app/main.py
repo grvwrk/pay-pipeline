@@ -1,8 +1,14 @@
 import uvicorn
+import logging
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from backend.app.config import settings
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s"
+)
 from backend.app.database.db import init_db
 from backend.app.api.chat import router as chat_router
 from backend.app.api.acp import router as acp_router
