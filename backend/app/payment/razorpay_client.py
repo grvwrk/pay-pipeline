@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 from backend.app.config import settings
 from backend.app.models.order import RazorpayOrder, PaymentCaptureResult, RefundResult, TransactionState
 from backend.app.database.repositories import order_repo, payment_repo, refund_repo, spend_repo
+from backend.app.payment.state_machine import state_machine
 
 
 class RazorpayApiError(RuntimeError):
@@ -122,13 +123,14 @@ class RazorpayClientWrapper:
         order = order_repo.get_order(order_id, db=db)
         if not order:
             raise ValueError(f"Unknown order {order_id}")
-        if amount_inr != order.amount:
-            raise ValueError("Payment amount must exactly match the authorized order amount")
+        if abs(amount_inr - order.amount) > 0.01:
+            raise ValueError(f"Payment amount ({amount_inr}) must match authorized order amount ({order.amount})")
 
         payment_id = f"pay_{uuid.uuid4().hex[:14]}"
         user_id = order.notes.get("user_id", "user_default_buyer") if order.notes else "user_default_buyer"
 
         if force_fail:
+            target_state = state_machine.transition(order.state, TransactionState.PAYMENT_FAILED)
             res = PaymentCaptureResult(
                 payment_id=payment_id,
                 order_id=order_id,
@@ -139,8 +141,9 @@ class RazorpayClientWrapper:
                 error_code="PAYMENT_DECLINED_BY_BANK",
                 error_description="Customer bank declined transaction simulation."
             )
-            order_repo.update_order_state(order_id, "failed", TransactionState.PAYMENT_FAILED, db=db)
+            order_repo.update_order_state(order_id, "failed", target_state, db=db)
         else:
+            target_state = state_machine.transition(order.state, TransactionState.PAYMENT_CAPTURED)
             res = PaymentCaptureResult(
                 payment_id=payment_id,
                 order_id=order_id,
@@ -149,7 +152,7 @@ class RazorpayClientWrapper:
                 status="captured",
                 method=method
             )
-            order_repo.update_order_state(order_id, "paid", TransactionState.PAYMENT_PENDING, db=db)
+            order_repo.update_order_state(order_id, "paid", target_state, db=db)
 
         payment_repo.record_payment(res, user_id=user_id, db=db)
         return res
@@ -166,6 +169,20 @@ class RazorpayClientWrapper:
         if not payment:
             raise ValueError(f"Payment {payment_id} not found")
 
+        if payment.status != "captured":
+            raise ValueError(f"Cannot refund payment {payment_id} with status '{payment.status}'. Only captured payments can be refunded.")
+
+        if amount_inr <= 0:
+            raise ValueError("Refund amount must be positive")
+
+        if amount_inr > payment.amount:
+            raise ValueError(f"Refund amount (₹{amount_inr:,.2f}) cannot exceed original payment amount (₹{payment.amount:,.2f})")
+
+        order = order_repo.get_order(payment.order_id, db=db)
+        if order:
+            target_state = state_machine.transition(order.state, TransactionState.REFUNDED)
+            order_repo.update_order_state(order.order_id, "refunded", target_state, db=db)
+
         refund_id = f"rfnd_{uuid.uuid4().hex[:14]}"
         refund = RefundResult(
             refund_id=refund_id,
@@ -181,10 +198,6 @@ class RazorpayClientWrapper:
         # Deduct refunded amount from cumulative user spend total
         spend_repo.decrement_spend(user_id, amount_inr, db=db)
 
-        order = order_repo.get_order(payment.order_id, db=db)
-        if order:
-            order_repo.update_order_state(order.order_id, "refunded", TransactionState.REFUNDED, db=db)
-
         return refund
 
     def fetch_order(self, order_id: str, db: Optional[Session] = None) -> Optional[RazorpayOrder]:
@@ -197,6 +210,8 @@ class RazorpayClientWrapper:
         return refund_repo.get_refund(refund_id, db=db)
 
     def verify_webhook_signature(self, raw_payload: str, signature: str) -> bool:
+        if not self.webhook_secret:
+            return False
         expected_signature = hmac.new(
             self.webhook_secret.encode("utf-8"),
             raw_payload.encode("utf-8"),
@@ -215,9 +230,11 @@ class RazorpayClientWrapper:
         if not order:
             return None
 
-        order_repo.update_order_state(order_id, "paid", TransactionState.COMPLETED, db=db)
+        target_state = state_machine.transition(order.state, TransactionState.COMPLETED)
+        order_repo.update_order_state(order_id, "paid", target_state, db=db)
         payment_repo.update_status(payment_id, "captured", db=db)
-        return order.notes.get("user_id") if order.notes else None
+        user_id = order.notes.get("user_id") if order.notes else None
+        return user_id or "user_default_buyer"
 
 
 razorpay_client = RazorpayClientWrapper()

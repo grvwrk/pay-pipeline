@@ -11,10 +11,21 @@ class TransactionStateMachine:
             TransactionState.DENIED
         ],
         TransactionState.PENDING_APPROVAL: [TransactionState.ORDER_CREATED, TransactionState.DENIED],
-        TransactionState.ORDER_CREATED: [TransactionState.PAYMENT_PENDING, TransactionState.DENIED],
-        TransactionState.PAYMENT_PENDING: [TransactionState.PAYMENT_CAPTURED, TransactionState.PAYMENT_FAILED],
+        TransactionState.ORDER_CREATED: [
+            TransactionState.PAYMENT_PENDING,
+            TransactionState.PAYMENT_CAPTURED,
+            TransactionState.COMPLETED,
+            TransactionState.DENIED,
+            TransactionState.PAYMENT_FAILED
+        ],
+        TransactionState.PAYMENT_PENDING: [
+            TransactionState.PAYMENT_CAPTURED,
+            TransactionState.COMPLETED,
+            TransactionState.PAYMENT_FAILED,
+            TransactionState.DENIED
+        ],
         TransactionState.PAYMENT_CAPTURED: [TransactionState.COMPLETED, TransactionState.REFUNDED],
-        TransactionState.PAYMENT_FAILED: [TransactionState.PAYMENT_PENDING, TransactionState.DENIED],
+        TransactionState.PAYMENT_FAILED: [TransactionState.PAYMENT_PENDING, TransactionState.DENIED, TransactionState.ORDER_CREATED],
         TransactionState.COMPLETED: [TransactionState.REFUNDED],
         TransactionState.REFUNDED: [],
         TransactionState.DENIED: []
@@ -22,6 +33,8 @@ class TransactionStateMachine:
 
     @classmethod
     def can_transition(cls, current: TransactionState, target: TransactionState) -> bool:
+        if current == target:
+            return True
         return target in cls.VALID_TRANSITIONS.get(current, [])
 
     @classmethod

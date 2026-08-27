@@ -59,6 +59,26 @@ class AuthoritativeWebhookHandler:
         if event_type == "payment.captured":
             session = db or SessionLocal()
             try:
+                order = order_repo.get_order(order_id, db=session)
+                if not order:
+                    if not db:
+                        session.close()
+                    return False, "ORDER_NOT_FOUND", {"order_id": order_id}
+
+                # Verify payment amount matches authorized order amount
+                if abs(amount - order.amount) > 0.01:
+                    logger.error("Webhook amount mismatch for order %s: expected %f, got %f", order_id, order.amount, amount)
+                    if not db:
+                        session.close()
+                    return False, "PAYMENT_AMOUNT_MISMATCH", {"expected": order.amount, "received": amount}
+
+                # Idempotency check: Skip duplicate processing if already completed/captured
+                if order.state in (TransactionState.COMPLETED, TransactionState.PAYMENT_CAPTURED):
+                    logger.info("Order %s already processed (state: %s). Acknowledging webhook idempotently.", order_id, order.state)
+                    if not db:
+                        session.close()
+                    return True, "EVENT_ALREADY_PROCESSED", {"order_id": order_id, "payment_id": payment_id}
+
                 # Reconcile payment status and state
                 buyer_id = razorpay_client.reconcile_verified_payment(
                     order_id=order_id,
@@ -72,8 +92,7 @@ class AuthoritativeWebhookHandler:
                     spend_repo.record_spend(buyer_id, amount, db=session)
 
                 # Atomically decrement product inventory for cart items
-                order = order_repo.get_order(order_id, db=session)
-                if order and order.cart_id:
+                if order.cart_id:
                     cart = cart_repo.get_cart(order.cart_id, db=session)
                     if cart:
                         for item in cart.items:
@@ -101,6 +120,8 @@ class AuthoritativeWebhookHandler:
                     result_status="FAILED",
                     explainability_notes=f"Atomic webhook transaction failed and was rolled back: {exc}"
                 )
+                if db:
+                    raise exc
                 return False, "TRANSACTION_PROCESSING_ERROR", {"error": str(exc)}
             finally:
                 if not db:
@@ -132,7 +153,9 @@ class AuthoritativeWebhookHandler:
             except Exception as exc:
                 if not db:
                     session.rollback()
-                raise exc
+                if db:
+                    raise exc
+                return False, "TRANSACTION_PROCESSING_ERROR", {"error": str(exc)}
             finally:
                 if not db:
                     session.close()
