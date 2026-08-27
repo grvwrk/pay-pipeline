@@ -1,4 +1,4 @@
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 from typing import List, Optional, Dict, Any
 from enum import Enum
 import datetime
@@ -23,7 +23,7 @@ class RazorpayOrder(BaseModel):
     order_id: str
     cart_id: str
     amount: float  # in INR
-    amount_in_paise: int
+    amount_in_paise: Optional[int] = None
     currency: str = "INR"
     status: str = "created"
     receipt: str
@@ -31,6 +31,12 @@ class RazorpayOrder(BaseModel):
     notes: Dict[str, str] = Field(default_factory=dict)
     state: TransactionState = TransactionState.ORDER_CREATED
     idempotency_key: Optional[str] = None
+
+    @model_validator(mode="after")
+    def compute_paise(self) -> "RazorpayOrder":
+        if self.amount_in_paise is None:
+            self.amount_in_paise = int(round(self.amount * 100))
+        return self
 
 
 class PaymentCaptureResult(BaseModel):

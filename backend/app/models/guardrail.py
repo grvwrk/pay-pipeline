@@ -7,6 +7,8 @@ class DecisionCode(str, Enum):
     APPROVED = "APPROVED"
     DENIED_SPEND_LIMIT = "DENIED_SPEND_LIMIT"
     DENIED_CUMULATIVE_LIMIT = "DENIED_CUMULATIVE_LIMIT"
+    DENIED_CUMULATIVE_SPEND_EXCEEDED = "DENIED_CUMULATIVE_SPEND_EXCEEDED"
+    DENIED_OUT_OF_STOCK = "DENIED_OUT_OF_STOCK"
     DENIED_UNAUTHORIZED_CATEGORY = "DENIED_UNAUTHORIZED_CATEGORY"
     DENIED_UNAUTHORIZED_MERCHANT = "DENIED_UNAUTHORIZED_MERCHANT"
     DENIED_CURRENCY_MISMATCH = "DENIED_CURRENCY_MISMATCH"
@@ -28,7 +30,7 @@ class PolicyEvaluationResult(BaseModel):
     requires_human_approval: bool = False
     approval_token: Optional[str] = None
     rule_evaluations: List[PolicyRuleEvaluation] = Field(default_factory=list)
-    evaluated_at: str = Field(default_factory=lambda: datetime.datetime.utcnow().isoformat() + "Z")
+    evaluated_at: str = Field(default_factory=lambda: datetime.datetime.now(datetime.timezone.utc).isoformat())
     bounded_amount: float
     max_allowed_amount: float
 
@@ -38,7 +40,7 @@ class GuardrailConfig(BaseModel):
     approval_threshold_inr: float = 3000.0
     max_item_quantity: int = 5
     allowed_currency: str = "INR"
-    allowed_categories: List[str] = [
+    allowed_categories: List[str] = Field(default_factory=lambda: [
         "smartphones",
         "mobile_accessories",
         "mechanical_keyboards",
@@ -50,5 +52,5 @@ class GuardrailConfig(BaseModel):
         "nutrition_and_fitness",
         "running_shoes",
         "health_and_groceries"
-    ]
-    merchant_whitelist: List[str] = ["merch_pay_pipeline_01"]
+    ])
+    merchant_whitelist: List[str] = Field(default_factory=lambda: ["merch_pay_pipeline_01"])

@@ -1,6 +1,19 @@
 from pydantic import BaseModel, Field
 from typing import Optional, Dict, Any, List
+from enum import Enum
 import datetime
+
+
+class ActorRole(str, Enum):
+    USER = "USER"
+    INTENT_ROUTER = "INTENT_ROUTER"
+    CATALOG_AGENT = "CATALOG_AGENT"
+    UPSELL_AGENT = "UPSELL_AGENT"
+    CHECKOUT_AGENT = "CHECKOUT_AGENT"
+    GUARDRAIL_ENGINE = "GUARDRAIL_ENGINE"
+    RAZORPAY_API = "RAZORPAY_API"
+    WEBHOOK_RECEIVER = "WEBHOOK_RECEIVER"
+    EXTERNAL_AI_BUYER = "EXTERNAL_AI_BUYER"
 
 
 class AuditRecord(BaseModel):
@@ -10,7 +23,7 @@ class AuditRecord(BaseModel):
     prev_hash: str
     record_hash: str
     actor_id: str
-    actor_role: str  # USER, INTENT_ROUTER, CATALOG_AGENT, UPSELL_AGENT, CHECKOUT_AGENT, GUARDRAIL_ENGINE, RAZORPAY_API, WEBHOOK_RECEIVER, EXTERNAL_AI_BUYER
+    actor_role: ActorRole
     action: str
     intent: Optional[str] = None
     tool_name: Optional[str] = None

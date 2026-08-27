@@ -1,17 +1,21 @@
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 from typing import List, Optional, Dict, Any
 import uuid
-
 
 class CartItem(BaseModel):
     product_id: str
     name: str
     price: float
     quantity: int = 1
-    subtotal: float
+    subtotal: float = 0.0
     category: str = ""
     specs: Dict[str, Any] = Field(default_factory=dict)
 
+    @model_validator(mode="after")
+    def calculate_subtotal(self) -> "CartItem":
+        if self.subtotal == 0.0 and self.price > 0:
+            self.subtotal = round(self.price * self.quantity, 2)
+        return self
 
 class BundleOffer(BaseModel):
     bundle_id: str = Field(default_factory=lambda: f"bndl_{uuid.uuid4().hex[:8]}")
@@ -34,7 +38,6 @@ class BundleOffer(BaseModel):
     @property
     def upsell_rationale(self) -> str:
         return self.rationale
-
 
 class Cart(BaseModel):
     cart_id: str = Field(default_factory=lambda: f"cart_{uuid.uuid4().hex[:10]}")
