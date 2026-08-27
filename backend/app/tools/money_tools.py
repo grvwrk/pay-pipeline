@@ -14,7 +14,8 @@ from backend.app.database.repositories import payment_repo, order_repo, cart_rep
 class PrivilegedMoneyTools:
     """
     Privileged Money-Moving Tools (Class B - High Risk).
-    Every execution must pass through deterministic policy evaluation and record to the cryptographic audit ledger.
+    Every execution must pass through deterministic policy evaluation 
+    and record to the cryptographic audit ledger.
     """
 
     @classmethod
@@ -33,26 +34,26 @@ class PrivilegedMoneyTools:
         )
 
         if not policy_res.allowed:
+            decision_val = policy_res.decision_code.value if hasattr(policy_res.decision_code, 'value') else str(policy_res.decision_code)
             audit_service.record_event(
                 actor_id=user_id,
                 actor_role="CHECKOUT_AGENT",
                 action="CREATE_ORDER_DENIED",
-                arguments={"cart_id": cart.cart_id, "amount": cart.total_amount, "decision_code": policy_res.decision_code.value},
-                guardrail_decision=policy_res.decision_code.value,
+                arguments={"cart_id": cart.cart_id, "amount": cart.total_amount, "decision_code": decision_val},
+                guardrail_decision=decision_val,
                 approval_required=policy_res.requires_human_approval,
                 result_status="DENIED",
                 explainability_notes=f"Guardrail denial: {policy_res.reason}"
             )
             return {
                 "success": False,
-                "decision_code": policy_res.decision_code,
+                "decision_code": decision_val,
                 "reason": policy_res.reason,
                 "requires_approval": policy_res.requires_human_approval,
                 "approval_token": policy_res.approval_token,
                 "policy_evaluation": policy_res.model_dump()
             }
 
-        # Save the cart to DB
         cart_repo.save_cart(cart)
 
         order = razorpay_client.create_order(
@@ -94,10 +95,31 @@ class PrivilegedMoneyTools:
         order = order_repo.get_order(order_id)
         if not order:
             err = f"Order {order_id} not found."
+            audit_service.record_event(
+                actor_id=user_id,
+                actor_role="CHECKOUT_AGENT",
+                action="CAPTURE_PAYMENT_FAILED",
+                tool_name="capture_payment",
+                arguments={"order_id": order_id, "error": err},
+                guardrail_decision="DENIED",
+                result_status="FAILED",
+                explainability_notes=err
+            )
             return {"success": False, "error": err}
 
+        # Strict amount matching guardrail check
         if amount_inr != order.amount:
             err = f"Payment amount ₹{amount_inr:,.2f} does not match authorized order amount ₹{order.amount:,.2f}."
+            audit_service.record_event(
+                actor_id=user_id,
+                actor_role="CHECKOUT_AGENT",
+                action="PAYMENT_AMOUNT_MISMATCH",
+                tool_name="capture_payment",
+                arguments={"order_id": order_id, "attempted_amount": amount_inr, "expected_amount": order.amount},
+                guardrail_decision="DENIED",
+                result_status="FAILED",
+                explainability_notes=err
+            )
             return {"success": False, "error": err}
 
         res = razorpay_client.simulate_payment_capture(order_id, amount_inr, method, force_fail)
@@ -142,20 +164,22 @@ class PrivilegedMoneyTools:
             user_id=user_id
         )
 
+        decision_val = decision_code.value if hasattr(decision_code, 'value') else str(decision_code)
+
         if not allowed:
             audit_service.record_event(
                 actor_id=user_id,
                 actor_role="CHECKOUT_AGENT",
                 action="ISSUE_REFUND_DENIED",
                 tool_name="issue_refund",
-                arguments={"payment_id": payment_id, "amount": amount_inr, "reason": reason, "decision_code": decision_code},
+                arguments={"payment_id": payment_id, "amount": amount_inr, "reason": reason, "decision_code": decision_val},
                 guardrail_decision="DENIED",
                 result_status="DENIED",
                 explainability_notes=f"Refund denied: {policy_reason}"
             )
             return {
                 "success": False,
-                "decision_code": decision_code,
+                "decision_code": decision_val,
                 "error": policy_reason
             }
 

@@ -29,11 +29,7 @@ class AgentPlan(BaseModel):
 class AutonomousCommerceAgentEngine:
     """
     Autonomous Multi-Agent AI Engine.
-    Executes Chain-of-Thought (CoT) reasoning, tool planning, and multi-agent synthesis:
-      1. Intent Router Agent: Deconstructs user query into structured commerce goals and parameters.
-      2. Catalog Agent: Performs semantic product search, spec reasoning, and multi-candidate evaluation.
-      3. Upsell Agent: Analyzes purchase affinity graphs, computes dynamic bundling, and justifies basket growth.
-      4. Checkout Agent: Validates line items, evaluates deterministic policy bounds, and manages gated execution.
+    Executes Chain-of-Thought (CoT) reasoning, tool planning, and multi-agent synthesis.
     """
 
     def __init__(self):
@@ -49,6 +45,10 @@ class AutonomousCommerceAgentEngine:
         force_fail_payment: bool = False
     ) -> Dict[str, Any]:
         reasoning_steps: List[AgentReasoningStep] = []
+        
+        # FIX: Define lower_msg to prevent NameError
+        lower_msg = user_message.lower()
+        
         # Step 1: Dynamic LLM Intent Router & Entity Extractor
         classified = groq_catalog_agent.classify_intent(user_message)
         max_price = classified.max_price
@@ -82,9 +82,13 @@ class AutonomousCommerceAgentEngine:
                 result_summary="Token verified. Privileged money tools unlocked for execution."
             ))
 
-            target_product = read_tools.get_product(explicit_sku) if explicit_sku else (
-                read_tools.get_product("sku_kb_keychron_k2") or read_tools.catalog[0]
-            )
+            target_product = read_tools.get_product(explicit_sku) if explicit_sku else read_tools.get_product("sku_kb_keychron_k2")
+            if not target_product and read_tools.catalog:
+                target_product = read_tools.catalog[0]
+                
+            # FIX: Graceful exit if no product resolves
+            if not target_product:
+                return {"type": "ERROR", "message": "Could not resolve a product for approval."}
 
             cart = Cart(user_id=user_id)
             cart.items.append(CartItem(
@@ -132,6 +136,13 @@ class AutonomousCommerceAgentEngine:
                     target_product = matches[0]
             if not target_product and read_tools.catalog:
                 target_product = read_tools.catalog[0]
+                
+            # FIX: Graceful exit if catalog is entirely empty
+            if not target_product:
+                return {
+                    "type": "CHECKOUT_UNAVAILABLE",
+                    "message": "No matching in-stock product could be resolved for checkout."
+                }
 
             cart = Cart(user_id=user_id)
             cart.items.append(CartItem(
@@ -177,7 +188,7 @@ class AutonomousCommerceAgentEngine:
                 order_data = order_res["order"]
                 reasoning_steps.append(AgentReasoningStep(
                     agent_name="Guardrail Engine",
-                    thought="All policy rules passed: Amount is bounded <= ₹5,000, Currency is INR, Merchant authorized.",
+                    thought="All policy rules passed: Amount is bounded, Currency is INR, Merchant authorized.",
                     action="ALLOW",
                     result_summary=f"Authorized Razorpay Order {order_data['order_id']}."
                 ))
@@ -192,13 +203,13 @@ class AutonomousCommerceAgentEngine:
             elif order_res.get("requires_approval"):
                 reasoning_steps.append(AgentReasoningStep(
                     agent_name="Guardrail Engine",
-                    thought=f"Order amount ₹{cart.total_amount:,.2f} exceeds autonomous spending threshold ₹{policy_engine.config.approval_threshold_inr:,.2f}. Gating financial execution.",
+                    thought=f"Order amount ₹{cart.total_amount:,.2f} exceeds autonomous spending threshold. Gating financial execution.",
                     action="GATED_APPROVAL_REQUIRED",
                     result_summary="Generated 2FA human confirmation token."
                 ))
                 return {
                     "type": "APPROVAL_REQUIRED",
-                    "message": f"⚠️ **Human Approval Required**: Transaction total **₹{cart.total_amount:,.2f}** exceeds autonomous threshold limit of ₹{policy_engine.config.approval_threshold_inr:,.2f}. Explicit human confirmation required.",
+                    "message": f"⚠️ **Human Approval Required**: Transaction total **₹{cart.total_amount:,.2f}** exceeds autonomous threshold limit. Explicit human confirmation required.",
                     "approval_token": order_res.get("approval_token"),
                     "cart": cart.model_dump(),
                     "policy_evaluation": order_res["policy_evaluation"],
@@ -211,10 +222,15 @@ class AutonomousCommerceAgentEngine:
                     action="DENIED",
                     result_summary=f"Blocked transaction with decision code: {order_res.get('decision_code')}"
                 ))
+                
+                # FIX: Handle decision_code safely if it's an Enum
+                decision_code = order_res.get("decision_code")
+                code_val = decision_code.value if hasattr(decision_code, "value") else str(decision_code)
+                
                 return {
                     "type": "GUARDRAIL_DENIED",
                     "message": f"🛑 **Transaction Blocked by Guardrail**: {order_res['reason']}",
-                    "decision_code": order_res.get("decision_code"),
+                    "decision_code": code_val,
                     "cart": cart.model_dump(),
                     "policy_evaluation": order_res["policy_evaluation"],
                     "reasoning_steps": [s.model_dump() for s in reasoning_steps]
@@ -222,7 +238,7 @@ class AutonomousCommerceAgentEngine:
 
         # Branch 3: Catalog Agent Discovery & Semantic Reasoning
         products = read_tools.catalog_lookup(ProductFilter(
-            query=user_message,
+            query=lower_msg, # FIX: use lower_msg for cleaner queries
             category=category,
             max_price=max_price
         ))

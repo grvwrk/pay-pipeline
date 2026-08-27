@@ -1,4 +1,5 @@
 from typing import Any, Dict, List, Optional
+from pydantic import Field
 from llama_index.core.workflow import Event
 from backend.app.models.catalog import Product
 from backend.app.models.cart import BundleOffer, Cart
@@ -35,7 +36,7 @@ class CatalogResultEvent(Event):
     user_query: str = ""
     user_id: str = "user_default_buyer"
     agent_summary: Optional[str] = None
-    tool_calls: List[Dict[str, Any]] = []
+    tool_calls: List[Dict[str, Any]] = Field(default_factory=list)
     provider: str = "deterministic"
 
 
@@ -55,7 +56,7 @@ class CheckoutCartEvent(Event):
     user_id: str = "user_default_buyer"
     approval_token: Optional[str] = None
     idempotency_key: Optional[str] = None
-    reasoning_steps: List[Dict[str, Any]] = []
+    reasoning_steps: List[Dict[str, Any]] = Field(default_factory=list)
     force_fail_payment: bool = False
 
 
