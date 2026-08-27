@@ -111,6 +111,7 @@ class AuthoritativeWebhookHandler:
             except Exception as exc:
                 if not db:
                     session.rollback()
+                    session.close()
                 logger.error("Webhook processing transaction failed for order %s: %s", order_id, exc)
                 audit_service.record_event(
                     actor_id="RAZORPAY_SERVER",
@@ -125,7 +126,10 @@ class AuthoritativeWebhookHandler:
                 return False, "TRANSACTION_PROCESSING_ERROR", {"error": str(exc)}
             finally:
                 if not db:
-                    session.close()
+                    try:
+                        session.close()
+                    except Exception:
+                        pass
 
             audit_service.record_event(
                 actor_id="RAZORPAY_SERVER",
