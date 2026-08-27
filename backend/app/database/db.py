@@ -31,12 +31,12 @@ def get_db() -> Generator[Session, None, None]:
         db.close()
 
 
-def init_db():
+def init_db(db: Session = None):
     """Create all database tables and seed catalog data if not already populated."""
     Base.metadata.create_all(bind=engine)
 
-    with SessionLocal() as db:
-        existing_count = db.query(ProductModel).count()
+    def _seed(session: Session):
+        existing_count = session.query(ProductModel).count()
         if existing_count == 0 and CATALOG_JSON_PATH.exists():
             try:
                 with open(CATALOG_JSON_PATH, "r", encoding="utf-8") as f:
@@ -54,12 +54,14 @@ def init_db():
                             complementary_ids_json=json.dumps(item.get("complementary_product_ids", [])),
                             description=item.get("description", "")
                         )
-                        db.add(product)
-                    db.commit()
+                        session.add(product)
+                    session.commit()
             except Exception as e:
-                db.rollback()
+                session.rollback()
                 print(f"[Database] Warning: Failed to seed catalog: {e}")
 
-
-# Initialize tables and seed data immediately
-init_db()
+    if db:
+        _seed(db)
+    else:
+        with SessionLocal() as session:
+            _seed(session)
