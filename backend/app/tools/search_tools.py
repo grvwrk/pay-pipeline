@@ -1,7 +1,6 @@
 import os
-import json
 import logging
-from typing import List, Dict, Any, Optional
+from typing import Dict, Any, Optional
 import httpx
 from bs4 import BeautifulSoup
 from backend.app.config import settings
@@ -13,8 +12,7 @@ logger = logging.getLogger(__name__)
 class TavilySearchEngine:
     """
     Tavily AI Search Engine for Agentic Commerce.
-    Provides real-time product intelligence, technical specification verification,
-    market price benchmarking, nutritional comparisons, and review synthesis.
+    Provides real-time product intelligence without silent fake data injection.
     """
 
     TAVILY_API_URL = "https://api.tavily.com/search"
@@ -26,8 +24,6 @@ class TavilySearchEngine:
             "User-Agent": "pay-pipeline-agent/1.0 (Autonomous Commerce Intelligence Engine)"
         }
 
-    # ==================== ASYNC IMPLEMENTATION (For Workflow & FastAPI) ====================
-
     async def asearch(
         self,
         query: str,
@@ -35,7 +31,7 @@ class TavilySearchEngine:
         search_depth: str = "basic",
         include_answer: bool = True
     ) -> Dict[str, Any]:
-        """Async execution of Tavily API with graceful fallback."""
+        """Async execution of Tavily API with transparent DuckDuckGo fallback."""
         active_key = self.api_key or getattr(settings, "TAVILY_API_KEY", None) or os.getenv("TAVILY_API_KEY")
 
         if active_key:
@@ -118,23 +114,13 @@ class TavilySearchEngine:
         except Exception as e:
             logger.warning(f"Async Fallback search failed for '{query}': {e}")
 
-        if not results:
-            results.append({
-                "title": f"Market Research Context: {query}",
-                "snippet": f"Verified product specifications, market price trends, and comparative benchmarks for '{query}'.",
-                "url": "https://tavily.com",
-                "score": 0.90
-            })
-
         return {
             "provider": "tavily_fallback",
             "query": query,
-            "answer": f"Market intelligence summary for '{query}' with {len(results)} source(s).",
+            "answer": f"Web search completed with {len(results)} result(s)." if results else "No web results found.",
             "results": results,
             "total_results": len(results)
         }
-
-    # ==================== SYNC IMPLEMENTATION (Legacy Support) ====================
 
     def search(
         self,
@@ -199,15 +185,13 @@ class TavilySearchEngine:
         except Exception as e:
             logger.warning(f"Fallback search failed for '{query}': {e}")
 
-        if not results:
-            results.append({
-                "title": f"Market Research Context: {query}",
-                "snippet": f"Verified product specifications, market price trends, and comparative benchmarks for '{query}'.",
-                "url": "https://tavily.com",
-                "score": 0.90
-            })
-
-        return {"provider": "tavily_fallback", "query": query, "answer": f"Market intelligence summary for '{query}' with {len(results)} source(s).", "results": results, "total_results": len(results)}
+        return {
+            "provider": "tavily_fallback",
+            "query": query,
+            "answer": f"Web search completed with {len(results)} result(s)." if results else "No web results found.",
+            "results": results,
+            "total_results": len(results)
+        }
 
 
 tavily_search_engine = TavilySearchEngine()

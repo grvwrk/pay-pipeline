@@ -1,10 +1,8 @@
 from typing import Optional, Dict, Any
 from backend.app.models.cart import Cart
 from backend.app.config import settings
-from backend.app.models.order import RazorpayOrder, PaymentCaptureResult, RefundResult, TransactionState
 from backend.app.guardrails.policy_engine import policy_engine
 from backend.app.guardrails.idempotency import idempotency_manager
-from backend.app.guardrails.spend_limiter import spend_limiter
 from backend.app.payment.razorpay_client import razorpay_client
 from backend.app.audit.audit_service import audit_service
 from backend.app.tools.dispatcher import tool_dispatcher, ToolRiskLevel
@@ -22,10 +20,13 @@ class PrivilegedMoneyTools:
     def create_order_guarded(
         cls,
         cart: Cart,
-        user_id: str = "user_default_buyer",
+        user_id: str,
         idempotency_key: Optional[str] = None,
         approval_token: Optional[str] = None
     ) -> Dict[str, Any]:
+        if not user_id:
+            raise ValueError("user_id is required for financial operations.")
+
         policy_res = policy_engine.evaluate(
             cart=cart,
             user_id=user_id,
@@ -88,10 +89,13 @@ class PrivilegedMoneyTools:
         cls,
         order_id: str,
         amount_inr: float,
-        user_id: str = "user_default_buyer",
+        user_id: str,
         method: str = "upi",
         force_fail: bool = False
     ) -> Dict[str, Any]:
+        if not user_id:
+            raise ValueError("user_id is required for financial operations.")
+
         order = order_repo.get_order(order_id)
         if not order:
             err = f"Order {order_id} not found."
@@ -107,7 +111,6 @@ class PrivilegedMoneyTools:
             )
             return {"success": False, "error": err}
 
-        # Strict amount matching guardrail check
         if amount_inr != order.amount:
             err = f"Payment amount ₹{amount_inr:,.2f} does not match authorized order amount ₹{order.amount:,.2f}."
             audit_service.record_event(
@@ -155,9 +158,12 @@ class PrivilegedMoneyTools:
         cls,
         payment_id: str,
         amount_inr: float,
-        user_id: str = "user_default_buyer",
+        user_id: str,
         reason: str = "Customer request"
     ) -> Dict[str, Any]:
+        if not user_id:
+            raise ValueError("user_id is required for financial operations.")
+
         allowed, policy_reason, decision_code = policy_engine.evaluate_refund(
             payment_id=payment_id,
             refund_amount=amount_inr,
@@ -213,12 +219,29 @@ class PrivilegedMoneyTools:
     def cancel_payment(
         cls,
         payment_id: str,
-        reason: str = "User cancelled",
-        user_id: str = "user_default_buyer"
+        user_id: str,
+        reason: str = "User cancelled"
     ) -> Dict[str, Any]:
+        if not user_id:
+            raise ValueError("user_id is required for payment cancellation.")
+
         payment = payment_repo.get_payment(payment_id)
         if not payment:
             return {"success": False, "error": f"Payment {payment_id} not found."}
+
+        if payment.status in ["captured", "refunded"]:
+            err_msg = f"Cannot cancel payment {payment_id} in final state '{payment.status}'."
+            audit_service.record_event(
+                actor_id=user_id,
+                actor_role="CHECKOUT_AGENT",
+                action="CANCEL_PAYMENT_DENIED",
+                tool_name="cancel_payment",
+                arguments={"payment_id": payment_id, "reason": reason},
+                guardrail_decision="DENIED",
+                result_status="FAILED",
+                explainability_notes=err_msg
+            )
+            return {"success": False, "error": err_msg}
 
         payment_repo.update_status(payment_id, "cancelled", error_code="CANCELLED_BY_USER", error_desc=reason)
         audit_service.record_event(

@@ -19,7 +19,6 @@ class ReadAndDecisionTools:
         return product_repo.get_all()
 
     def reload_catalog(self):
-        """Database repository handles fresh lookups automatically."""
         pass
 
     def catalog_lookup(self, filter_params: ProductFilter) -> List[Product]:
@@ -57,6 +56,9 @@ class ReadAndDecisionTools:
         promo_code: Optional[str] = None,
         include_bundle: bool = False
     ) -> Cart:
+        if not user_id:
+            raise ValueError("user_id is required to build a cart.")
+
         cart_id = f"cart_{uuid.uuid4().hex[:12]}"
         cart = Cart(cart_id=cart_id, user_id=user_id)
 
@@ -66,7 +68,6 @@ class ReadAndDecisionTools:
             prod_id = item_data.get("product_id") or item_data.get("id") or item_data.get("sku")
             qty = int(item_data.get("quantity", 1))
             
-            # Capture bundle flag if passed within item payload
             if item_data.get("include_bundle"):
                 should_include_bundle = True
 
@@ -81,7 +82,6 @@ class ReadAndDecisionTools:
                     category=prod.category
                 ))
 
-        # Check dynamic upsell bundle eligibility safely
         if len(cart.items) == 1 and should_include_bundle:
             bundle = self.calculate_upsell_bundle(cart.items[0].product_id)
             if bundle:
@@ -97,13 +97,14 @@ class ReadAndDecisionTools:
                     ))
                     cart.applied_bundle = bundle
 
-        # Compute server-side totals & discounts
         return self.calculate_cart_total(cart, promo_code=promo_code)
 
-    def add_to_cart(self, cart_id: str, product_id: str, quantity: int = 1) -> Cart:
+    def add_to_cart(self, cart_id: str, product_id: str, quantity: int = 1, user_id: Optional[str] = None) -> Cart:
         cart = cart_repo.get_cart(cart_id)
         if not cart:
-            cart = Cart(cart_id=cart_id, user_id="user_default_buyer")
+            if not user_id:
+                raise ValueError("user_id required to initialize a new cart.")
+            cart = Cart(cart_id=cart_id, user_id=user_id)
 
         prod = self.get_product(product_id)
         if not prod:
@@ -132,7 +133,6 @@ class ReadAndDecisionTools:
 
         cart.items = [i for i in cart.items if i.product_id != product_id]
         
-        # Clear applied bundle if item list is altered
         if cart.applied_bundle:
             bundle_prod_ids = {cart.applied_bundle.primary_product_id, cart.applied_bundle.complementary_product_id}
             cart_prod_ids = {i.product_id for i in cart.items}
@@ -168,8 +168,8 @@ class ReadAndDecisionTools:
             return None
 
         bundle_subtotal = primary.price + comp.price
-        # 5% bundle discount off complementary item price
-        discount_amount = round(comp.price * 0.05, 2)
+        discount_rate = discount_engine.BUNDLE_DISCOUNT_RATE
+        discount_amount = round(comp.price * discount_rate, 2)
         bundle_total = round(bundle_subtotal - discount_amount, 2)
 
         return BundleOffer(
@@ -180,8 +180,8 @@ class ReadAndDecisionTools:
             original_combined_price=bundle_subtotal,
             discounted_bundle_price=bundle_total,
             savings_amount=discount_amount,
-            discount_percentage=5.0,
-            rationale=f"Pairing {primary.name} with {comp.name} unlocks an authorized 5% accessory bundle discount."
+            discount_percentage=discount_rate * 100.0,
+            rationale=f"Pairing {primary.name} with {comp.name} unlocks an authorized {discount_rate * 100:.0f}% accessory bundle discount."
         )
 
     def get_order_status(self, order_id: str) -> Optional[Dict[str, Any]]:

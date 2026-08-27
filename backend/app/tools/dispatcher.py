@@ -1,13 +1,11 @@
 import time
-import uuid
 import inspect
 import asyncio
 from enum import Enum
 from typing import Dict, Any, Optional, Callable
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
 from backend.app.audit.audit_service import audit_service
-from backend.app.guardrails.policy_engine import policy_engine
 
 
 class ToolRiskLevel(str, Enum):
@@ -39,14 +37,8 @@ class DispatchResult(BaseModel):
 
 class ToolDispatcher:
     """
-    Controlled Tool Dispatcher implementing the strict execution contract:
-      1. Tool name & schema validation
-      2. Auth & session validation
-      3. Explicit Risk Level categorization (LOW / MEDIUM / HIGH)
-      4. Deterministic policy / guardrail checks
-      5. Execution timing & latency recording
-      6. Immutable audit recording
-      7. Structured typed result returning (Async & Sync support)
+    Controlled Tool Dispatcher implementing strict execution contracts,
+    explicit user authentication, and safe async/sync boundaries.
     """
 
     def __init__(self):
@@ -68,20 +60,40 @@ class ToolDispatcher:
             requires_guardrail=requires_guardrail
         )
 
-    # ==================== ASYNC DISPATCH (For Workflows & FastAPI) ====================
-
     async def aexecute(
         self,
         tool_name: str,
         arguments: Dict[str, Any],
         context: Optional[Dict[str, Any]] = None
     ) -> DispatchResult:
-        """Asynchronously dispatches tool execution with audit logging and latency tracking."""
+        """Asynchronously dispatches tool execution with mandatory actor authentication."""
         start_time = time.perf_counter()
         ctx = context or {}
-        user_id = ctx.get("user_id", "user_default_buyer")
+        user_id = ctx.get("user_id")
 
-        # 1. Validate tool existence
+        if not user_id:
+            latency = (time.perf_counter() - start_time) * 1000.0
+            err_msg = "Unauthenticated tool call attempt. Missing required 'user_id' in execution context."
+            audit_service.record_event(
+                actor_id="ANONYMOUS",
+                actor_role="TOOL_DISPATCHER",
+                action="TOOL_EXECUTION_BLOCKED",
+                tool_name=tool_name,
+                arguments=arguments,
+                guardrail_decision="REJECTED_UNAUTHENTICATED",
+                result_status="FAILED",
+                latency_ms=latency,
+                explainability_notes=err_msg
+            )
+            return DispatchResult(
+                success=False,
+                tool_name=tool_name,
+                risk_level=ToolRiskLevel.HIGH,
+                error=err_msg,
+                latency_ms=latency,
+                guardrail_decision="REJECTED"
+            )
+
         if tool_name not in self._registry:
             latency = (time.perf_counter() - start_time) * 1000.0
             err_msg = f"Unauthorized or unrecognized tool '{tool_name}'. Tool execution rejected."
@@ -107,7 +119,6 @@ class ToolDispatcher:
 
         tool_def = self._registry[tool_name]
 
-        # 2. Execute handler (Async or Sync)
         try:
             if inspect.iscoroutinefunction(tool_def.handler):
                 handler_result = await tool_def.handler(**arguments)
@@ -115,8 +126,6 @@ class ToolDispatcher:
                 handler_result = tool_def.handler(**arguments)
 
             latency = (time.perf_counter() - start_time) * 1000.0
-
-            # 3. Process result and guardrail outcomes
             return self._process_result(tool_name, tool_def, handler_result, user_id, arguments, latency)
 
         except Exception as e:
@@ -141,8 +150,6 @@ class ToolDispatcher:
                 latency_ms=latency,
                 guardrail_decision="FAILED"
             )
-
-    # ==================== SYNC DISPATCH (Legacy & Script Support) ====================
 
     def execute(
         self,
@@ -150,70 +157,19 @@ class ToolDispatcher:
         arguments: Dict[str, Any],
         context: Optional[Dict[str, Any]] = None
     ) -> DispatchResult:
-        """Synchronously dispatches tool execution."""
-        start_time = time.perf_counter()
-        ctx = context or {}
-        user_id = ctx.get("user_id", "user_default_buyer")
-
-        if tool_name not in self._registry:
-            latency = (time.perf_counter() - start_time) * 1000.0
-            err_msg = f"Unauthorized or unrecognized tool '{tool_name}'. Tool execution rejected."
-            audit_service.record_event(
-                actor_id=user_id,
-                actor_role="TOOL_DISPATCHER",
-                action="TOOL_EXECUTION_BLOCKED",
-                tool_name=tool_name,
-                arguments=arguments,
-                guardrail_decision="REJECTED_UNKNOWN_TOOL",
-                result_status="FAILED",
-                latency_ms=latency,
-                explainability_notes=err_msg
-            )
-            return DispatchResult(
-                success=False,
-                tool_name=tool_name,
-                risk_level=ToolRiskLevel.HIGH,
-                error=err_msg,
-                latency_ms=latency,
-                guardrail_decision="REJECTED"
-            )
-
-        tool_def = self._registry[tool_name]
-
+        """Synchronously dispatches tool execution with running event loop protection."""
         try:
-            if inspect.iscoroutinefunction(tool_def.handler):
-                # Fallback for running async handlers within synchronous calls
-                handler_result = asyncio.run(tool_def.handler(**arguments))
-            else:
-                handler_result = tool_def.handler(**arguments)
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = None
 
-            latency = (time.perf_counter() - start_time) * 1000.0
-            return self._process_result(tool_name, tool_def, handler_result, user_id, arguments, latency)
-
-        except Exception as e:
-            latency = (time.perf_counter() - start_time) * 1000.0
-            err_msg = f"Tool execution failed: {str(e)}"
-            audit_service.record_event(
-                actor_id=user_id,
-                actor_role="TOOL_DISPATCHER",
-                action="TOOL_EXECUTION_ERROR",
-                tool_name=tool_name,
-                arguments=arguments,
-                guardrail_decision="ERROR",
-                result_status="FAILED",
-                latency_ms=latency,
-                explainability_notes=err_msg
-            )
-            return DispatchResult(
-                success=False,
-                tool_name=tool_name,
-                risk_level=tool_def.risk_level,
-                error=err_msg,
-                latency_ms=latency,
-                guardrail_decision="FAILED"
+        if loop and loop.is_running():
+            raise RuntimeError(
+                f"Cannot invoke synchronous execute() for tool '{tool_name}' while inside a running event loop. "
+                "Use 'await tool_dispatcher.aexecute(...)' instead."
             )
 
-    # ==================== INTERNAL RESULT PROCESSING ====================
+        return asyncio.run(self.aexecute(tool_name, arguments, context))
 
     def _process_result(
         self,
@@ -224,8 +180,6 @@ class ToolDispatcher:
         arguments: Dict[str, Any],
         latency: float
     ) -> DispatchResult:
-
-        # Inspect if handler returned a guardrail denial / approval requirement
         if isinstance(handler_result, dict):
             if not handler_result.get("success", True) and handler_result.get("requires_approval"):
                 return DispatchResult(
@@ -239,31 +193,29 @@ class ToolDispatcher:
                     guardrail_decision="GATED_APPROVAL_REQUIRED",
                     explainability_notes=handler_result.get("reason")
                 )
-            elif not handler_result.get("success", True) and handler_result.get("decision_code"):
+            elif not handler_result.get("success", True) and (handler_result.get("decision_code") or handler_result.get("error")):
                 return DispatchResult(
                     success=False,
                     tool_name=tool_name,
                     risk_level=tool_def.risk_level,
                     data=handler_result,
-                    error=handler_result.get("reason"),
+                    error=handler_result.get("error") or handler_result.get("reason"),
                     latency_ms=latency,
-                    guardrail_decision=str(handler_result.get("decision_code")),
-                    explainability_notes=handler_result.get("reason")
+                    guardrail_decision=str(handler_result.get("decision_code", "FAILED")),
+                    explainability_notes=handler_result.get("reason") or handler_result.get("error")
                 )
 
-        # Record standard tool execution audit entry for low/medium risk operations
-        if tool_def.risk_level != ToolRiskLevel.HIGH:
-            audit_service.record_event(
-                actor_id=user_id,
-                actor_role="TOOL_DISPATCHER",
-                action="TOOL_EXECUTION_SUCCESS",
-                tool_name=tool_name,
-                arguments=arguments,
-                guardrail_decision="APPROVED",
-                result_status="SUCCESS",
-                latency_ms=latency,
-                explainability_notes=f"Tool '{tool_name}' executed cleanly."
-            )
+        audit_service.record_event(
+            actor_id=user_id,
+            actor_role="TOOL_DISPATCHER",
+            action="TOOL_EXECUTION_SUCCESS",
+            tool_name=tool_name,
+            arguments=arguments,
+            guardrail_decision="APPROVED",
+            result_status="SUCCESS",
+            latency_ms=latency,
+            explainability_notes=f"Tool '{tool_name}' executed cleanly."
+        )
 
         return DispatchResult(
             success=True,

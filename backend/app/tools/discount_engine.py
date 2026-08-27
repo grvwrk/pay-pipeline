@@ -20,7 +20,6 @@ class DeterministicDiscountEngine:
     and promo rules bounded by merchant policy. Never trusts LLM-generated amounts.
     """
 
-    # Configurable merchant discount rules
     TIER_1_THRESHOLD: float = 3000.0
     TIER_1_RATE: float = 0.10          # 10% discount on carts > ₹3,000
     TIER_1_MAX_CAP: float = 500.0      # Capped at ₹500 max
@@ -44,11 +43,13 @@ class DeterministicDiscountEngine:
         total_discount = 0.0
         applied_rules: List[str] = []
         effective_rate = 0.0
+        applicable_max_cap = 0.0
 
         # 1. Evaluate Bundle Savings if present
         if bundle and bundle.savings_amount > 0:
             bundle_savings = bundle.savings_amount
             total_discount += bundle_savings
+            applicable_max_cap = bundle_savings
             applied_rules.append(f"Complementary accessory bundle discount: ₹{bundle_savings:.2f}")
 
         # 2. Evaluate Tiered Volume Discount (if no bundle discount already applied)
@@ -57,6 +58,7 @@ class DeterministicDiscountEngine:
             tier_discount = min(calc_tier, self.TIER_1_MAX_CAP)
             total_discount += tier_discount
             effective_rate = self.TIER_1_RATE
+            applicable_max_cap = self.TIER_1_MAX_CAP
             applied_rules.append(f"Tier 1 volume discount (10% over ₹3,000, capped at ₹500): ₹{tier_discount:.2f}")
 
         # 3. Evaluate Promo Code (optional override/addition)
@@ -69,6 +71,7 @@ class DeterministicDiscountEngine:
                 if promo_discount > total_discount:
                     total_discount = promo_discount
                     effective_rate = p_rule["rate"]
+                    applicable_max_cap = p_rule["max_discount"]
                     applied_rules = [f"Promo code {promo_code.upper()}: ₹{promo_discount:.2f}"]
 
         # Guard against negative total
@@ -79,7 +82,7 @@ class DeterministicDiscountEngine:
             subtotal=round(subtotal, 2),
             discount_rate=effective_rate,
             calculated_discount=round(total_discount, 2),
-            max_discount=self.TIER_1_MAX_CAP,
+            max_discount=applicable_max_cap,
             final_discount=round(total_discount, 2),
             final_total=round(final_total, 2),
             applied_rules=applied_rules
