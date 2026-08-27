@@ -15,7 +15,7 @@ payment:
   razorpay_key_secret: null
   razorpay_webhook_secret: "pay_pipeline_webhook_secret_default_2026"
   customer_name: "pay-pipeline Buyer"
-  customer_contact: "+919999999999"
+  customer_contact: "9876543210"
   customer_email: "buyer@pay-pipeline.com"
 
 audit:

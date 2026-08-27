@@ -238,6 +238,13 @@ class RazorpayClientWrapper:
             with urlopen(request, timeout=15) as response:
                 payload = json.loads(response.read().decode("utf-8"))
                 return payload["short_url"]
+        except HTTPError as error:
+            try:
+                error_body = error.read().decode("utf-8")
+                logger.error(f"Failed to create Razorpay payment link for Order ID '{order.order_id}': {error}. Response: {error_body}")
+            except Exception:
+                logger.error(f"Failed to create Razorpay payment link for Order ID '{order.order_id}': {error}")
+            return None
         except Exception as error:
             logger.error(f"Failed to create Razorpay payment link for Order ID '{order.order_id}': {error}")
             return None

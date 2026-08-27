@@ -293,6 +293,7 @@ class AgenticCommerceWorkflow(Workflow):
                 "type": "ORDER_CREATED",
                 "message": f"Order {result['order']['order_id']} created for ₹{ev.cart.total_amount:,.2f}. Awaiting payment initiation.",
                 "order": result["order"],
+                "payment_link": result.get("payment_link"),
                 "cart": ev.cart.model_dump(),
                 "policy_evaluation": result["policy_evaluation"],
                 "reasoning_steps": trace
