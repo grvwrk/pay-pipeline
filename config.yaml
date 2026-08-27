@@ -10,7 +10,7 @@ database:
 
 # provider_mode: "simulator" (safe offline test simulator) or "razorpay" (live/test REST API)
 payment:
-  provider_mode: "simulator"
+  provider_mode: "razorpay"
   razorpay_key_id: null
   razorpay_key_secret: null
   razorpay_webhook_secret: "pay_pipeline_webhook_secret_default_2026"
