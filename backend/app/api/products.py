@@ -1,6 +1,6 @@
 from fastapi import APIRouter, HTTPException, Query
 from typing import List, Optional
-from backend.app.models.catalog import Product, ProductFilter
+from backend.app.models.catalog import Product
 from backend.app.tools.read_tools import read_tools
 
 router = APIRouter(prefix="/products", tags=["Catalog & Products"])
@@ -10,7 +10,7 @@ router = APIRouter(prefix="/products", tags=["Catalog & Products"])
 def list_products(
     query: Optional[str] = Query(None, description="Search keyword"),
     category: Optional[str] = Query(None, description="Category filter"),
-    max_price: Optional[float] = Query(None, description="Max INR budget"),
+    max_price: Optional[float] = Query(None, ge=0.0, description="Max INR budget"),
     in_stock_only: bool = Query(True, description="Filter for in-stock items only")
 ):
     """Retrieve filtered in-stock products from the merchant catalog."""

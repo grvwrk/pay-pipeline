@@ -17,6 +17,11 @@ async def receive_razorpay_webhook(
 
     success, code, data = webhook_handler.handle_webhook(body_str, x_razorpay_signature)
     if not success:
-        raise HTTPException(status_code=400, detail=code)
+        # Distinguish client validation failures (400) from server/database failures (500)
+        if code in ("INVALID_WEBHOOK_SIGNATURE", "MALFORMED_JSON_PAYLOAD", "PAYMENT_AMOUNT_MISMATCH"):
+            raise HTTPException(status_code=400, detail=code)
+        
+        # Trigger 500 so Razorpay retries transient server errors
+        raise HTTPException(status_code=500, detail=f"Webhook delivery transient error: {code}")
 
     return {"status": "ACKNOWLEDGED", "code": code, "data": data}

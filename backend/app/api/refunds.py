@@ -10,7 +10,7 @@ router = APIRouter(prefix="/refund", tags=["Refund Operations"])
 class RefundRequest(BaseModel):
     payment_id: str
     amount_inr: float = Field(gt=0, description="Amount to refund in INR")
-    user_id: str = "user_default_buyer"
+    user_id: str = Field(..., description="ID of the user requesting the refund")
     reason: str = "Customer request"
 
 
@@ -26,11 +26,9 @@ def execute_refund(req: RefundRequest):
         user_id=req.user_id,
         reason=req.reason
     )
-    if not res.get("success"):
-        raise HTTPException(
-            status_code=400,
-            detail=res.get("error", "Refund request denied by policy.")
-        )
+    if not isinstance(res, dict) or not res.get("success"):
+        error_msg = res.get("error", "Refund request denied by policy.") if isinstance(res, dict) else "Refund process failed."
+        raise HTTPException(status_code=400, detail=error_msg)
     return res
 
 
