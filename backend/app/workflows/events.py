@@ -65,6 +65,11 @@ class ApprovalConfirmationEvent(Event):
     approval_token: str
     target_sku: Optional[str] = None
     idempotency_key: Optional[str] = None
+    # State preservation fields
+    include_bundle: bool = False
+    force_fail_payment: bool = False
+    max_price: Optional[float] = None
+    user_query: str = ""
 
 
 class RefundRequestEvent(Event):

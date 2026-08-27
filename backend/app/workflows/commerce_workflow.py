@@ -11,7 +11,6 @@ from backend.app.models.cart import Cart, CartItem
 from backend.app.models.catalog import ProductFilter
 from backend.app.tools.money_tools import money_tools
 from backend.app.tools.read_tools import read_tools
-from backend.app.tools.dispatcher import tool_dispatcher
 from backend.app.llm.groq_agent import groq_catalog_agent
 from backend.app.workflows.events import (
     ApprovalConfirmationEvent, CatalogResultEvent, CatalogSearchEvent,
@@ -34,7 +33,7 @@ class AgenticCommerceWorkflow(Workflow):
     """
     Event-driven LlamaIndex multi-agent commerce workflow.
     Coordinates Intent Router, Catalog Agent, Upsell Agent, Checkout Agent,
-    Refund Agent, and Policy Agent through the controlled ToolDispatcher.
+    Refund Agent, and Policy Agent through controlled tool interfaces.
     """
 
     @step
@@ -52,7 +51,6 @@ class AgenticCommerceWorkflow(Workflow):
 
         intent = "APPROVE" if approval else classified.intent
 
-        # Extract payment/order IDs from query text if present
         if not order_id:
             ord_m = re.search(r'(order_[a-zA-Z0-9]+)', query)
             if ord_m:
@@ -64,7 +62,6 @@ class AgenticCommerceWorkflow(Workflow):
 
         refund_amt = None
         if intent == "REFUND":
-            # Strict regex requiring currency marker or contextual text
             amt_m = re.search(r'(?:rs\.?|inr|₹)\s*(\d[\d,.]*)', query, re.IGNORECASE)
             if amt_m:
                 try:
@@ -105,7 +102,7 @@ class AgenticCommerceWorkflow(Workflow):
         self,
         ctx: Context,
         ev: IntentClassifiedEvent
-    ) -> Union[CatalogSearchEvent, CheckoutEvent, ApprovalConfirmationEvent, RefundRequestEvent, StatusQueryEvent]:
+    ) -> Union[CatalogSearchEvent, CheckoutEvent, ApprovalConfirmationEvent, RefundRequestEvent, StatusQueryEvent, StopEvent]:
         if ev.intent in {"PRODUCT_SEARCH", "PRODUCT_DETAILS", "PRODUCT_RECOMMENDATION", "GENERAL_COMMERCE_QUERY", "DISCOVERY"}:
             return CatalogSearchEvent(
                 query=ev.user_query,
@@ -119,22 +116,34 @@ class AgenticCommerceWorkflow(Workflow):
                 user_id=ev.user_id,
                 approval_token=ev.approval_token or "",
                 target_sku=ev.target_sku,
-                idempotency_key=ev.idempotency_key
+                idempotency_key=ev.idempotency_key,
+                include_bundle=ev.include_bundle,
+                force_fail_payment=ev.force_fail_payment,
+                max_price=ev.max_price,
+                user_query=ev.user_query
             )
-        elif ev.intent == "REFUND" and ev.payment_id:
-            return RefundRequestEvent(
-                payment_id=ev.payment_id,
-                refund_amount=ev.refund_amount,
-                user_id=ev.user_id,
-                reason=f"User requested refund via chat: {ev.user_query}"
-            )
+        elif ev.intent == "REFUND":
+            # BUG FIX: Prevent fallthrough to CheckoutEvent if payment_id is missing
+            if ev.payment_id:
+                return RefundRequestEvent(
+                    payment_id=ev.payment_id,
+                    refund_amount=ev.refund_amount,
+                    user_id=ev.user_id,
+                    reason=f"User requested refund via chat: {ev.user_query}"
+                )
+            else:
+                return StopEvent(result={
+                    "type": "REFUND_REQUIRES_INFO",
+                    "message": "⚠️ **Missing Information**: Please specify your Payment ID (e.g., `pay_12345678`) to initiate a refund.",
+                    "reasoning_steps": [_trace("Refund Agent", "Refund requested without a valid Payment ID.", "PROMPT_PAYMENT_ID")]
+                })
         elif ev.intent in {"ORDER_STATUS", "PAYMENT_STATUS"}:
             return StatusQueryEvent(
                 query_type="ORDER" if ev.intent == "ORDER_STATUS" else "PAYMENT",
                 entity_id=ev.order_id or ev.payment_id or "unknown",
                 user_id=ev.user_id
             )
-        else:
+        elif ev.intent in {"CHECKOUT", "CART_ADD", "BUY"}:
             return CheckoutEvent(
                 user_id=ev.user_id,
                 target_sku=ev.target_sku,
@@ -145,16 +154,27 @@ class AgenticCommerceWorkflow(Workflow):
                 idempotency_key=ev.idempotency_key,
                 force_fail_payment=ev.force_fail_payment
             )
+        else:
+            # Fallback for unrecognized intent to prevent unexpected charges
+            return StopEvent(result={
+                "type": "UNKNOWN_INTENT",
+                "message": "I could not determine your request. Please ask a product question or specify a purchase.",
+                "reasoning_steps": [_trace("Intent Router", f"Unhandled intent '{ev.intent}' gracefully stopped.", "HALT")]
+            })
 
     @step
     async def approval_agent(self, ctx: Context, ev: ApprovalConfirmationEvent) -> CheckoutEvent:
         await asyncio.to_thread(policy_engine.register_human_approval, ev.approval_token)
+        # BUG FIX: Forward preserved bundle and testing flags into CheckoutEvent
         return CheckoutEvent(
             user_id=ev.user_id,
             target_sku=ev.target_sku,
-            query="approved checkout",
+            query=ev.user_query or "approved checkout",
             approval_token=ev.approval_token,
-            idempotency_key=ev.idempotency_key
+            idempotency_key=ev.idempotency_key,
+            include_bundle=ev.include_bundle,
+            force_fail_payment=ev.force_fail_payment,
+            max_price=ev.max_price
         )
 
     @step
@@ -175,7 +195,7 @@ class AgenticCommerceWorkflow(Workflow):
             guardrail_decision="APPROVED",
             result_status="SUCCESS",
             latency_ms=latency,
-            explainability_notes=f"Catalog Agent retrieved {len(products)} matching in-stock candidate(s) via {agent_result.provider}."
+            explainability_notes=f"Catalog Agent retrieved {len(products)} matching candidate(s) via {agent_result.provider}."
         )
 
         return CatalogResultEvent(
@@ -196,7 +216,7 @@ class AgenticCommerceWorkflow(Workflow):
         if not ev.top_choice:
             return StopEvent(result={
                 "type": "CATALOG_DISCOVERY",
-                "message": "No in-stock catalog items match this request.",
+                "message": "No in-stock catalog items match your request.",
                 "products": [],
                 "top_choice": None,
                 "upsell_bundle": None,
@@ -267,11 +287,11 @@ class AgenticCommerceWorkflow(Workflow):
         latency = (time.perf_counter() - start_t) * 1000.0
 
         trace = ev.reasoning_steps
-        if result["success"]:
+        if result.get("success"):
             trace.append(_trace("Guardrail & Policy Agent", "Deterministic policy approved order creation.", "APPROVE", latency_ms=latency, tool_called="create_order"))
             return StopEvent(result={
                 "type": "ORDER_CREATED",
-                "message": f"Order {result['order']['order_id']} created for ₹{ev.cart.total_amount:,.2f}. Awaiting payment initiation and webhook confirmation.",
+                "message": f"Order {result['order']['order_id']} created for ₹{ev.cart.total_amount:,.2f}. Awaiting payment initiation.",
                 "order": result["order"],
                 "cart": ev.cart.model_dump(),
                 "policy_evaluation": result["policy_evaluation"],
@@ -292,13 +312,13 @@ class AgenticCommerceWorkflow(Workflow):
         decision_code = result.get("decision_code")
         code_val = decision_code.value if hasattr(decision_code, "value") else str(decision_code)
 
-        trace.append(_trace("Guardrail & Policy Agent", result["reason"], "DENY", latency_ms=latency))
+        trace.append(_trace("Guardrail & Policy Agent", result.get("reason", "Policy violation"), "DENY", latency_ms=latency))
         return StopEvent(result={
             "type": "GUARDRAIL_DENIED",
-            "message": f"Transaction blocked by deterministic policy: {result['reason']}",
+            "message": f"Transaction blocked by policy: {result.get('reason', 'Policy check failed')}",
             "decision_code": code_val,
             "cart": ev.cart.model_dump(),
-            "policy_evaluation": result["policy_evaluation"],
+            "policy_evaluation": result.get("policy_evaluation"),
             "reasoning_steps": trace
         })
 

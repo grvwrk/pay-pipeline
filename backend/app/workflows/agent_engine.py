@@ -45,8 +45,6 @@ class AutonomousCommerceAgentEngine:
         force_fail_payment: bool = False
     ) -> Dict[str, Any]:
         reasoning_steps: List[AgentReasoningStep] = []
-        
-        # FIX: Define lower_msg to prevent NameError
         lower_msg = user_message.lower()
         
         # Step 1: Dynamic LLM Intent Router & Entity Extractor
@@ -79,16 +77,15 @@ class AutonomousCommerceAgentEngine:
                 action="REGISTER_APPROVAL_TOKEN",
                 tool_called="policy_engine.register_human_approval",
                 arguments={"token": token},
-                result_summary="Token verified. Privileged money tools unlocked for execution."
+                result_summary="Token verified. Privileged financial execution unlocked."
             ))
 
             target_product = read_tools.get_product(explicit_sku) if explicit_sku else read_tools.get_product("sku_kb_keychron_k2")
             if not target_product and read_tools.catalog:
                 target_product = read_tools.catalog[0]
                 
-            # FIX: Graceful exit if no product resolves
             if not target_product:
-                return {"type": "ERROR", "message": "Could not resolve a product for approval."}
+                return {"type": "ERROR", "message": "Could not resolve a product for approval execution."}
 
             cart = Cart(user_id=user_id)
             cart.items.append(CartItem(
@@ -107,19 +104,33 @@ class AutonomousCommerceAgentEngine:
                 approval_token=token
             )
 
+            # BUG FIX: Safely check for order creation success before accessing order properties
+            if not order_res.get("success"):
+                decision_code = order_res.get("decision_code")
+                code_val = decision_code.value if hasattr(decision_code, "value") else str(decision_code)
+                return {
+                    "type": "GUARDRAIL_DENIED",
+                    "message": f"🛑 **Approval Failed**: {order_res.get('reason', 'Policy execution failed')}",
+                    "decision_code": code_val,
+                    "cart": cart.model_dump(),
+                    "policy_evaluation": order_res.get("policy_evaluation"),
+                    "reasoning_steps": [s.model_dump() for s in reasoning_steps]
+                }
+
+            order_data = order_res["order"]
             reasoning_steps.append(AgentReasoningStep(
                 agent_name="Checkout Agent",
                 thought=f"Executing capability-gated Razorpay order creation for approved cart total ₹{cart.total_amount:,.2f}.",
                 action="EXECUTE_RAZORPAY_ORDER",
                 tool_called="create_order",
                 arguments={"amount": cart.total_amount, "cart_id": cart.cart_id},
-                result_summary=f"Order {order_res['order']['order_id']} created on Razorpay test rails."
+                result_summary=f"Order {order_data['order_id']} created on Razorpay test rails."
             ))
 
             return {
                 "type": "ORDER_CREATED",
                 "message": f"✅ **Human Approval Verified!** Razorpay order created for **₹{cart.total_amount:,.2f}**.",
-                "order": order_res.get("order"),
+                "order": order_data,
                 "cart": cart.model_dump(),
                 "policy_evaluation": order_res.get("policy_evaluation"),
                 "reasoning_steps": [s.model_dump() for s in reasoning_steps]
@@ -137,7 +148,6 @@ class AutonomousCommerceAgentEngine:
             if not target_product and read_tools.catalog:
                 target_product = read_tools.catalog[0]
                 
-            # FIX: Graceful exit if catalog is entirely empty
             if not target_product:
                 return {
                     "type": "CHECKOUT_UNAVAILABLE",
@@ -184,7 +194,7 @@ class AutonomousCommerceAgentEngine:
                 idempotency_key=idempotency_key or f"idem_{uuid.uuid4().hex[:8]}"
             )
 
-            if order_res["success"]:
+            if order_res.get("success"):
                 order_data = order_res["order"]
                 reasoning_steps.append(AgentReasoningStep(
                     agent_name="Guardrail Engine",
@@ -197,7 +207,7 @@ class AutonomousCommerceAgentEngine:
                     "message": f"Order #{order_data['order_id']} created on Razorpay test rails for **₹{cart.total_amount:,.2f}**.",
                     "order": order_data,
                     "cart": cart.model_dump(),
-                    "policy_evaluation": order_res["policy_evaluation"],
+                    "policy_evaluation": order_res.get("policy_evaluation"),
                     "reasoning_steps": [s.model_dump() for s in reasoning_steps]
                 }
             elif order_res.get("requires_approval"):
@@ -212,39 +222,42 @@ class AutonomousCommerceAgentEngine:
                     "message": f"⚠️ **Human Approval Required**: Transaction total **₹{cart.total_amount:,.2f}** exceeds autonomous threshold limit. Explicit human confirmation required.",
                     "approval_token": order_res.get("approval_token"),
                     "cart": cart.model_dump(),
-                    "policy_evaluation": order_res["policy_evaluation"],
+                    "policy_evaluation": order_res.get("policy_evaluation"),
                     "reasoning_steps": [s.model_dump() for s in reasoning_steps]
                 }
             else:
                 reasoning_steps.append(AgentReasoningStep(
                     agent_name="Guardrail Engine",
-                    thought=f"Policy violation detected: {order_res['reason']}. Intercepting transaction to protect user funds.",
+                    thought=f"Policy violation detected: {order_res.get('reason', 'Rejected')}. Intercepting transaction to protect user funds.",
                     action="DENIED",
                     result_summary=f"Blocked transaction with decision code: {order_res.get('decision_code')}"
                 ))
                 
-                # FIX: Handle decision_code safely if it's an Enum
                 decision_code = order_res.get("decision_code")
                 code_val = decision_code.value if hasattr(decision_code, "value") else str(decision_code)
                 
                 return {
                     "type": "GUARDRAIL_DENIED",
-                    "message": f"🛑 **Transaction Blocked by Guardrail**: {order_res['reason']}",
+                    "message": f"🛑 **Transaction Blocked by Guardrail**: {order_res.get('reason', 'Policy check failed')}",
                     "decision_code": code_val,
                     "cart": cart.model_dump(),
-                    "policy_evaluation": order_res["policy_evaluation"],
+                    "policy_evaluation": order_res.get("policy_evaluation"),
                     "reasoning_steps": [s.model_dump() for s in reasoning_steps]
                 }
 
         # Branch 3: Catalog Agent Discovery & Semantic Reasoning
         products = read_tools.catalog_lookup(ProductFilter(
-            query=lower_msg, # FIX: use lower_msg for cleaner queries
+            query=lower_msg,
             category=category,
             max_price=max_price
         ))
 
-        # Tavily AI Search for market intelligence & spec validation
-        web_intel = tavily_search_engine.search(query=user_message, max_results=3)
+        # BUG FIX: Gracefully handle external search failures (API timeouts, network drops)
+        web_intel = {}
+        try:
+            web_intel = tavily_search_engine.search(query=user_message, max_results=3)
+        except Exception as e:
+            web_intel = {"total_results": 0, "answer": f"Market search unavailable: {str(e)}"}
 
         reasoning_steps.append(AgentReasoningStep(
             agent_name="Catalog & Market Research Agent",
@@ -269,7 +282,6 @@ class AutonomousCommerceAgentEngine:
 
         top_choice = products[0]
         
-        # Reasoning over top candidate specifications
         spec_analysis_lines = []
         if top_choice.specs:
             for k, v in list(top_choice.specs.items())[:3]:
@@ -283,7 +295,6 @@ class AutonomousCommerceAgentEngine:
             result_summary=f"Selected {top_choice.name} as highest relevance candidate."
         ))
 
-        # Dynamic Upsell Bundle Reasoning
         bundle_offer = read_tools.calculate_upsell_bundle(top_choice.id)
         if bundle_offer:
             reasoning_steps.append(AgentReasoningStep(
@@ -295,7 +306,6 @@ class AutonomousCommerceAgentEngine:
                 result_summary=f"Created bundle with ₹{bundle_offer.savings_amount:,.2f} savings."
             ))
 
-        # Construct Agentic Synthesis Message
         msg_lines = [
             f"I found {len(products)} matching option(s). Top recommendation: **{top_choice.name}** at ₹{top_choice.price:,.2f} (Rating: {top_choice.rating}⭐)."
         ]
