@@ -50,10 +50,25 @@ class AuthoritativeWebhookHandler:
             return False, "MALFORMED_JSON_PAYLOAD", {}
 
         event_type = payload.get("event", "unknown")
-        payment_entity = payload.get("payload", {}).get("payment", {}).get("entity", {})
-        order_id = payment_entity.get("order_id", "unknown_order")
-        payment_id = payment_entity.get("id", "unknown_pay")
+        
+        # Safe nested dictionary traversal (guards against NoneType keys)
+        payload_data = payload.get("payload") or {}
+        payment_wrapper = payload_data.get("payment") or {}
+        payment_entity = payment_wrapper.get("entity") or {}
+        
+        order_id = payment_entity.get("order_id")
+        payment_id = payment_entity.get("id")
         amount = float(payment_entity.get("amount", 0)) / 100.0
+        
+        # Fallback to order entity (for custom order.paid event structures)
+        if not order_id:
+            order_wrapper = payload_data.get("order") or {}
+            order_entity = order_wrapper.get("entity") or {}
+            order_id = order_entity.get("id", "unknown_order")
+            amount = float(order_entity.get("amount", 0)) / 100.0
+
+        if not payment_id:
+            payment_id = "unknown_pay"
 
         # 2. Process payment.captured or order.paid event
         if event_type in ("payment.captured", "order.paid"):
