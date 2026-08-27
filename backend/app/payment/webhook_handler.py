@@ -55,8 +55,8 @@ class AuthoritativeWebhookHandler:
         payment_id = payment_entity.get("id", "unknown_pay")
         amount = float(payment_entity.get("amount", 0)) / 100.0
 
-        # 2. Process payment.captured event
-        if event_type == "payment.captured":
+        # 2. Process payment.captured or order.paid event
+        if event_type in ("payment.captured", "order.paid"):
             session = db or SessionLocal()
             try:
                 order = order_repo.get_order(order_id, db=session)
