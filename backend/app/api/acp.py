@@ -132,29 +132,34 @@ def execute_acp_checkout(req: ACPCheckoutRequest):
     )
 
     latest_audit = audit_repo.get_latest()
+    audit_event_id = latest_audit.event_id if latest_audit else "EVT_INITIAL"
+    signature = latest_audit.signature if latest_audit else "SIG_GENESIS"
 
     if not order_res["success"]:
         return ACPCheckoutResponse(
             status="DENIED",
             amount=cart.total_amount,
             currency="INR",
-            audit_event_id=latest_audit.event_id,
-            signature=latest_audit.signature,
+            audit_event_id=audit_event_id,
+            signature=signature,
             message=f"Order rejected by policy: {order_res['reason']}"
         )
 
     order = order_res["order"]
+    order_id = order["order_id"] if isinstance(order, dict) else order.order_id
+    amount = order["amount"] if isinstance(order, dict) else order.amount
+    currency = order["currency"] if isinstance(order, dict) else order.currency
+
     return ACPCheckoutResponse(
         status="ORDER_CREATED",
-        order_id=order["order_id"],
-        amount=order["amount"],
-        currency=order["currency"],
-        razorpay_payment_link=f"https://rzp.io/i/{order['order_id']}",
-        audit_event_id=latest_audit.event_id,
-        signature=latest_audit.signature,
+        order_id=order_id,
+        amount=amount,
+        currency=currency,
+        razorpay_payment_link=f"https://rzp.io/i/{order_id}",
+        audit_event_id=audit_event_id,
+        signature=signature,
         message="Machine-to-machine checkout successfully authorized and order created."
     )
-
 @router.get("/mcp-schema")
 def get_mcp_tool_definitions():
     """Model Context Protocol (MCP) tool schema for autonomous agent integration."""

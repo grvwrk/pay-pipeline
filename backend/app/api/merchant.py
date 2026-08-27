@@ -43,8 +43,11 @@ def get_merchant_analytics():
 def create_campaign(campaign: Campaign):
     """Launch bounded revenue growth campaign."""
     campaigns_db = _load_campaigns_db()
-    campaigns_db.setdefault("campaigns", []).append(campaign.model_dump())
     
+    # Dump with mode="json" to stringify datetime/UUID fields safely
+    campaigns_db.setdefault("campaigns", []).append(campaign.model_dump(mode="json"))
+    
+    CAMPAIGNS_FILE_PATH.parent.mkdir(parents=True, exist_ok=True)
     with open(CAMPAIGNS_FILE_PATH, "w", encoding="utf-8") as f:
         json.dump(campaigns_db, f, indent=2)
 
