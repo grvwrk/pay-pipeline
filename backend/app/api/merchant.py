@@ -12,8 +12,14 @@ CAMPAIGNS_FILE_PATH = Path(__file__).parent.parent / "data" / "campaigns_db.json
 
 def _load_campaigns_db():
     if CAMPAIGNS_FILE_PATH.exists():
-        with open(CAMPAIGNS_FILE_PATH, "r", encoding="utf-8") as f:
-            return json.load(f)
+        try:
+            with open(CAMPAIGNS_FILE_PATH, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except json.JSONDecodeError as err:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Failed to parse campaign database file: {str(err)}"
+            )
     return {"segments": [], "campaigns": [], "merchant_config": {}}
 
 
@@ -22,18 +28,18 @@ def get_merchant_analytics():
     """Merchant Growth KPIs calculated strictly dynamically from DB repositories and configuration."""
     campaigns_db = _load_campaigns_db()
 
-    # 1. Fetch Merchant Baseline AOV (Raises exception if not explicitly configured)
+    # 1. Baseline AOV Check
     merchant_config = campaigns_db.get("merchant_config", {})
     baseline_aov = merchant_config.get("baseline_aov_inr") or getattr(settings, "MERCHANT_BASELINE_AOV_INR", None)
 
     if baseline_aov is None or float(baseline_aov) <= 0:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Merchant baseline AOV is not configured. Configure 'baseline_aov_inr' in merchant config to compute growth analytics."
+            detail="Merchant baseline AOV is not configured. Set 'baseline_aov_inr' in merchant config."
         )
     baseline_aov = float(baseline_aov)
 
-    # 2. Query Orders for Revenue and AOV Metrics
+    # 2. Orders & Revenue Calculation
     all_orders = order_repo.list_orders(limit=1000)
     captured_orders = [o for o in all_orders if o.state == "PAYMENT_CAPTURED"]
     total_orders = len(captured_orders)
@@ -47,7 +53,7 @@ def get_merchant_analytics():
     total_revenue = round(sum(o.amount for o in captured_orders), 2)
     agent_aov = round(total_revenue / total_orders, 2)
 
-    # 3. Dynamic Cart Abandonment Rate
+    # 3. Cart Abandonment Rate
     all_carts = cart_repo.list_carts(limit=1000) if hasattr(cart_repo, "list_carts") else []
     total_carts = len(all_carts)
     
@@ -59,18 +65,18 @@ def get_merchant_analytics():
 
     cart_abandonment_rate = round(max(0.0, (total_carts - total_orders) / total_carts), 2)
 
-    # 4. Dynamic Upsell Conversion Rate
+    # 4. Upsell Conversion Rate
     upsell_orders_count = sum(
         1 for o in captured_orders
         if (isinstance(o.notes, dict) and o.notes.get("bundle_applied") == "true")
     )
     upsell_conversion_rate = round(upsell_orders_count / total_orders, 2)
 
-    # 5. Guardrail Interceptions from Audit Ledger
+    # 5. Guardrail Interceptions
     audit_chain = audit_repo.list_all() if hasattr(audit_repo, "list_all") else []
     interceptions = sum(1 for r in audit_chain if r.result_status == "DENIED")
 
-    # 6. Strict Baseline AOV Comparison Lift
+    # 6. AOV Growth Lift
     aov_lift_percent = round(((agent_aov - baseline_aov) / baseline_aov) * 100.0, 1)
 
     return {

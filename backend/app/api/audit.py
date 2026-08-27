@@ -1,36 +1,48 @@
-from fastapi import APIRouter, HTTPException
-from typing import List, Optional
-from backend.app.models.audit import AuditRecord, AuditChainVerificationResult, ExplainabilityReport
-from backend.app.audit.audit_service import audit_service
+from fastapi import APIRouter, HTTPException, status
+from backend.app.database.repositories import audit_repo
 
-router = APIRouter(prefix="/audit", tags=["Cryptographic Audit Ledger"])
+router = APIRouter(prefix="/audit", tags=["Audit & Verification"])
 
 
-@router.get("/chain", response_model=List[AuditRecord])
+@router.get("/chain")
 def get_audit_chain():
-    """Retrieve all records in the cryptographic audit trail (latest first)."""
-    return audit_service.get_all_records()
+    """Retrieve complete tamper-evident audit ledger."""
+    chain = audit_repo.list_all()
+    if not chain:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Audit ledger is empty. No audit events recorded yet."
+        )
+    return {"total_events": len(chain), "chain": chain}
 
 
-@router.get("/verify", response_model=AuditChainVerificationResult)
-def verify_audit_chain():
-    """Run real-time cryptographic SHA-256 hash-chain and HMAC-SHA256 signature verification."""
-    return audit_service.verify_chain_integrity()
-
-
-@router.get("/explain/{order_id}", response_model=ExplainabilityReport)
-def get_explainability_report(order_id: str):
-    """Generate human-readable decision timeline and explainability report for an order."""
-    report = audit_service.generate_explainability_report(order_id)
-    if not report:
-        raise HTTPException(status_code=404, detail=f"No audit records found for order/entity '{order_id}'.")
-    return report
+@router.get("/verify")
+def verify_audit_integrity():
+    """Verify cryptographic hash integrity of the entire audit chain."""
+    chain = audit_repo.list_all()
+    if not chain:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Cannot verify integrity: Audit ledger is empty."
+        )
+    
+    is_valid, bad_event_id = audit_repo.verify_chain_integrity()
+    if not is_valid:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Cryptographic integrity check failed at event ID: {bad_event_id}"
+        )
+    
+    return {"status": "VERIFIED", "message": "All cryptographic signatures in audit ledger are valid."}
 
 
 @router.get("/{transaction_id}")
-def get_transaction_audit(transaction_id: str):
-    """Retrieve audit history and explainability for a specific transaction/order/payment ID."""
-    report = audit_service.generate_explainability_report(transaction_id)
-    if not report:
-        raise HTTPException(status_code=404, detail=f"No audit trail found for transaction '{transaction_id}'.")
-    return report
+def get_audit_record(transaction_id: str):
+    """Retrieve audit record by transaction ID."""
+    record = audit_repo.get_by_transaction_id(transaction_id)
+    if not record:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"No audit record found for transaction ID '{transaction_id}'."
+        )
+    return record

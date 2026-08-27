@@ -112,18 +112,41 @@ def get_quote(req: ACPQuoteRequest):
         expires_at=expires_at.isoformat()
     )
 
+from datetime import datetime, timezone
+from copy import deepcopy
+from fastapi import APIRouter, HTTPException, status
+from backend.app.models.acp import ACPCheckoutRequest, ACPCheckoutResponse
+
+router = APIRouter(prefix="/acp", tags=["Agentic Commerce Protocol (ACP)"])
+
+
 @router.post("/checkout", response_model=ACPCheckoutResponse)
 def execute_acp_checkout(req: ACPCheckoutRequest):
     """Programmatic transaction endpoint for external AI buyers using quoted items."""
     quote = _quotes_db.get(req.quote_id)
     if not quote:
-        raise HTTPException(status_code=404, detail="Unknown quote_id. Request a quote before checkout.")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Quote ID '{req.quote_id}' not found. Request a valid quote before checkout."
+        )
+
     if quote["expires_at"] <= datetime.now(timezone.utc):
         del _quotes_db[req.quote_id]
-        raise HTTPException(status_code=410, detail="Quote has expired. Request a new quote before checkout.")
+        raise HTTPException(
+            status_code=status.HTTP_410_GONE,
+            detail=f"Quote ID '{req.quote_id}' has expired. Request a new quote before checkout."
+        )
 
     cart = deepcopy(quote["cart"])
     cart.user_id = req.buyer_agent_id
+
+    # Strictly fetch the latest audit state (No silent fallback strings allowed)
+    latest_audit = audit_repo.get_latest()
+    if not latest_audit:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Audit ledger is unitialized or empty. An active audit cryptographic chain is required for ACP transactions."
+        )
 
     order_res = money_tools.create_order_guarded(
         cart=cart,
@@ -131,35 +154,41 @@ def execute_acp_checkout(req: ACPCheckoutRequest):
         idempotency_key=req.idempotency_key
     )
 
-    latest_audit = audit_repo.get_latest()
-    audit_event_id = latest_audit.event_id if latest_audit else "EVT_INITIAL"
-    signature = latest_audit.signature if latest_audit else "SIG_GENESIS"
+    currency = getattr(cart, "currency", None) or "INR"
 
-    if not order_res["success"]:
+    if not order_res.get("success"):
         return ACPCheckoutResponse(
             status="DENIED",
             amount=cart.total_amount,
-            currency="INR",
-            audit_event_id=audit_event_id,
-            signature=signature,
-            message=f"Order rejected by policy: {order_res['reason']}"
+            currency=currency,
+            audit_event_id=latest_audit.event_id,
+            signature=latest_audit.signature,
+            message=f"Order rejected by policy: {order_res.get('reason', 'Policy violation')}"
         )
 
     order = order_res["order"]
     order_id = order["order_id"] if isinstance(order, dict) else order.order_id
     amount = order["amount"] if isinstance(order, dict) else order.amount
-    currency = order["currency"] if isinstance(order, dict) else order.currency
+    order_currency = order.get("currency") if isinstance(order, dict) else getattr(order, "currency", currency)
+
+    payment_link = order_res.get("payment_link") or (order.get("payment_link") if isinstance(order, dict) else getattr(order, "payment_link", None))
+    if not payment_link:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Payment gateway failed to issue a payment link for Order ID '{order_id}'."
+        )
 
     return ACPCheckoutResponse(
         status="ORDER_CREATED",
         order_id=order_id,
         amount=amount,
-        currency=currency,
-        razorpay_payment_link=f"https://rzp.io/i/{order_id}",
-        audit_event_id=audit_event_id,
-        signature=signature,
+        currency=order_currency,
+        razorpay_payment_link=payment_link,
+        audit_event_id=latest_audit.event_id,
+        signature=latest_audit.signature,
         message="Machine-to-machine checkout successfully authorized and order created."
     )
+
 @router.get("/mcp-schema")
 def get_mcp_tool_definitions():
     """Model Context Protocol (MCP) tool schema for autonomous agent integration."""

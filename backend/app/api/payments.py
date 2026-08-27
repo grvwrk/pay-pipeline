@@ -6,26 +6,42 @@ from backend.app.config import settings
 from backend.app.tools.money_tools import money_tools
 from backend.app.database.repositories import payment_repo
 
+from fastapi import APIRouter, HTTPException, status
+from backend.app.database.repositories import order_repo
+from backend.app.config import settings
+
+router = APIRouter(prefix="/payments", tags=["Payment Integration"])
 
 router = APIRouter(prefix="/payments", tags=["Payment initiation"])
 
 
 @router.get("/checkout-config")
-def checkout_config():
-    """Public client configuration; the Razorpay secret is never exposed."""
-    return {
-        "provider_mode": settings.PAYMENT_PROVIDER_MODE,
-        "razorpay_key_id": settings.RAZORPAY_KEY_ID if settings.PAYMENT_PROVIDER_MODE == "razorpay" else None,
-    }
-
+def get_checkout_config():
+    """Get active payment gateway client parameters."""
+    key_id = getattr(settings, "RAZORPAY_KEY_ID", None)
+    if not key_id:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Razorpay key ID is not configured in application settings."
+        )
+    return {"key_id": key_id, "currency": "INR"}
 
 @router.get("/{payment_id}")
-def get_payment(payment_id: str):
-    """Retrieve full payment details and verification status."""
-    payment = payment_repo.get_payment(payment_id)
-    if not payment:
-        raise HTTPException(status_code=404, detail=f"Payment '{payment_id}' not found.")
-    return payment
+def get_payment_details(payment_id: str):
+    """Retrieve payment and order association by payment_id or order_id."""
+    order = order_repo.get_by_id(payment_id)
+    if not order:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Payment record or Order ID '{payment_id}' not found."
+        )
+    return {
+        "order_id": order.order_id,
+        "amount": order.amount,
+        "currency": getattr(order, "currency", "INR"),
+        "state": order.state,
+        "created_at": order.created_at
+    }
 
 
 class PaymentInitiationRequest(BaseModel):
