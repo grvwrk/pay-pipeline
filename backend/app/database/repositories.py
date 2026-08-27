@@ -112,7 +112,6 @@ class ProductRepository:
                 s.close()
 
     def decrement_inventory(self, product_id: str, quantity: int = 1, db: Optional[Session] = None) -> bool:
-        """Atomic SQL decrement preventing concurrency overselling."""
         s = db or SessionLocal()
         try:
             rows_updated = s.query(ProductModel).filter(
@@ -134,7 +133,6 @@ class ProductRepository:
                 s.close()
 
     def increment_inventory(self, product_id: str, quantity: int = 1, db: Optional[Session] = None) -> bool:
-        """Atomic SQL increment."""
         s = db or SessionLocal()
         try:
             rows_updated = s.query(ProductModel).filter(
@@ -293,7 +291,7 @@ class OrderRepository:
                 status=order.status,
                 receipt=order.receipt,
                 state=order.state.value if isinstance(order.state, TransactionState) else str(order.state),
-                notes_json=json.dumps(order.notes or {}),
+                notes_json=json.dumps(order.notes or {}, default=str),
                 idempotency_key=order.idempotency_key
             )
             s.merge(om)
@@ -527,7 +525,6 @@ class ApprovalRepository:
                 s.close()
 
     def is_approved(self, token: str, max_age_seconds: int = 900, db: Optional[Session] = None) -> bool:
-        """Validates approval and verifies token age against expiration limit."""
         s = db or SessionLocal()
         try:
             app = s.query(ApprovalModel).filter(ApprovalModel.token == token).first()
@@ -583,7 +580,6 @@ class SpendRepository:
                 s.close()
 
     def record_spend(self, user_id: str, amount: float, db: Optional[Session] = None):
-        """Atomic addition of user cumulative spend."""
         s = db or SessionLocal()
         try:
             record = s.query(UserSpendModel).filter(UserSpendModel.user_id == user_id).first()
@@ -605,7 +601,6 @@ class SpendRepository:
                 s.close()
 
     def decrement_spend(self, user_id: str, amount: float, db: Optional[Session] = None):
-        """Deducts refunded amounts from cumulative user spend total."""
         s = db or SessionLocal()
         try:
             record = s.query(UserSpendModel).filter(UserSpendModel.user_id == user_id).first()
@@ -644,21 +639,28 @@ class SpendRepository:
 
 
 class AuditRepository:
-    def record_audit(self, audit_record: AuditRecord, db: Optional[Session] = None) -> AuditRecord:
+    def save_record(self, audit_record: AuditRecord, db: Optional[Session] = None) -> AuditRecord:
         s = db or SessionLocal()
         try:
             am = AuditRecordModel(
+                index=audit_record.index,
                 event_id=audit_record.event_id,
                 timestamp=audit_record.timestamp,
+                prev_hash=audit_record.prev_hash,
+                record_hash=audit_record.record_hash,
                 actor_id=audit_record.actor_id,
                 actor_role=audit_record.actor_role,
                 action=audit_record.action,
-                arguments_json=json.dumps(audit_record.arguments or {}),
+                intent=audit_record.intent,
+                tool_name=audit_record.tool_name,
+                arguments_json=json.dumps(audit_record.arguments or {}, default=str),
                 guardrail_decision=audit_record.guardrail_decision,
+                approval_required=audit_record.approval_required,
                 transaction_state=audit_record.transaction_state,
                 result_status=audit_record.result_status,
-                explainability_notes=audit_record.explainability_notes,
-                signature=audit_record.signature
+                signature=audit_record.signature,
+                latency_ms=audit_record.latency_ms,
+                explainability_notes=audit_record.explainability_notes
             )
             s.add(am)
             if not db:
@@ -672,24 +674,106 @@ class AuditRepository:
             if not db:
                 s.close()
 
-    def get_audit_trail(self, limit: int = 100, db: Optional[Session] = None) -> List[AuditRecord]:
+    record_audit = save_record
+
+    def get_latest(self, db: Optional[Session] = None) -> Optional[AuditRecord]:
         s = db or SessionLocal()
         try:
-            models = s.query(AuditRecordModel).order_by(AuditRecordModel.id.desc()).limit(limit).all()
+            am = s.query(AuditRecordModel).order_by(AuditRecordModel.index.desc()).first()
+            if not am:
+                return None
+            try:
+                args = json.loads(am.arguments_json or "{}")
+            except Exception:
+                args = {}
+            return AuditRecord(
+                index=am.index,
+                timestamp=am.timestamp,
+                event_id=am.event_id,
+                prev_hash=am.prev_hash,
+                record_hash=am.record_hash,
+                actor_id=am.actor_id,
+                actor_role=am.actor_role,
+                action=am.action,
+                intent=am.intent,
+                tool_name=am.tool_name,
+                arguments=args,
+                guardrail_decision=am.guardrail_decision,
+                approval_required=am.approval_required,
+                transaction_state=am.transaction_state,
+                result_status=am.result_status,
+                signature=am.signature,
+                latency_ms=am.latency_ms or 0.0,
+                explainability_notes=am.explainability_notes or ""
+            )
+        finally:
+            if not db:
+                s.close()
+
+    def get_all(self, db: Optional[Session] = None) -> List[AuditRecord]:
+        s = db or SessionLocal()
+        try:
+            models = s.query(AuditRecordModel).order_by(AuditRecordModel.index.asc()).all()
             results = []
             for am in models:
+                try:
+                    args = json.loads(am.arguments_json or "{}")
+                except Exception:
+                    args = {}
                 results.append(AuditRecord(
-                    event_id=am.event_id,
+                    index=am.index,
                     timestamp=am.timestamp,
+                    event_id=am.event_id,
+                    prev_hash=am.prev_hash,
+                    record_hash=am.record_hash,
                     actor_id=am.actor_id,
                     actor_role=am.actor_role,
                     action=am.action,
-                    arguments=am.arguments,
+                    intent=am.intent,
+                    tool_name=am.tool_name,
+                    arguments=args,
                     guardrail_decision=am.guardrail_decision,
+                    approval_required=am.approval_required,
                     transaction_state=am.transaction_state,
                     result_status=am.result_status,
-                    explainability_notes=am.explainability_notes,
-                    signature=am.signature
+                    signature=am.signature,
+                    latency_ms=am.latency_ms or 0.0,
+                    explainability_notes=am.explainability_notes or ""
+                ))
+            return results
+        finally:
+            if not db:
+                s.close()
+
+    def get_audit_trail(self, limit: int = 100, db: Optional[Session] = None) -> List[AuditRecord]:
+        s = db or SessionLocal()
+        try:
+            models = s.query(AuditRecordModel).order_by(AuditRecordModel.index.desc()).limit(limit).all()
+            results = []
+            for am in models:
+                try:
+                    args = json.loads(am.arguments_json or "{}")
+                except Exception:
+                    args = {}
+                results.append(AuditRecord(
+                    index=am.index,
+                    timestamp=am.timestamp,
+                    event_id=am.event_id,
+                    prev_hash=am.prev_hash,
+                    record_hash=am.record_hash,
+                    actor_id=am.actor_id,
+                    actor_role=am.actor_role,
+                    action=am.action,
+                    intent=am.intent,
+                    tool_name=am.tool_name,
+                    arguments=args,
+                    guardrail_decision=am.guardrail_decision,
+                    approval_required=am.approval_required,
+                    transaction_state=am.transaction_state,
+                    result_status=am.result_status,
+                    signature=am.signature,
+                    latency_ms=am.latency_ms or 0.0,
+                    explainability_notes=am.explainability_notes or ""
                 ))
             return results
         finally:
@@ -715,7 +799,7 @@ class IdempotencyRepository:
     def register_key(self, key: str, data: Dict[str, Any], db: Optional[Session] = None):
         s = db or SessionLocal()
         try:
-            im = IdempotencyModel(key=key, response_json=json.dumps(data))
+            im = IdempotencyModel(key=key, response_json=json.dumps(data, default=str))
             s.merge(im)
             if not db:
                 s.commit()
