@@ -9,7 +9,7 @@ from backend.app.database.models import Base, ProductModel
 
 CATALOG_JSON_PATH = Path(settings.CATALOG_DB_PATH)
 if not CATALOG_JSON_PATH.is_absolute():
-    CATALOG_JSON_PATH = (Path(__file__).resolve().parent.parent.parent / settings.CATALOG_DB_PATH).resolve()
+    CATALOG_JSON_PATH = (Path(__file__).resolve().parent.parent.parent.parent / settings.CATALOG_DB_PATH).resolve()
 
 connect_args = {}
 if "sqlite" in settings.DATABASE_URL:
