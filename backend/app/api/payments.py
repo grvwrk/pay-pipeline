@@ -23,7 +23,12 @@ def get_checkout_config():
 @router.get("/{payment_id}")
 def get_payment_details(payment_id: str):
     """Retrieve payment and order association by payment_id or order_id."""
-    order = order_repo.get_by_id(payment_id)
+    order = order_repo.get_order(payment_id)
+    if not order:
+        payment = payment_repo.get_payment(payment_id)
+        if payment:
+            order = order_repo.get_order(payment.order_id)
+
     if not order:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
