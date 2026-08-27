@@ -1,5 +1,6 @@
 from fastapi import APIRouter, HTTPException, status
 from backend.app.database.repositories import audit_repo
+from backend.app.audit.audit_service import audit_service
 
 router = APIRouter(prefix="/audit", tags=["Audit & Verification"])
 
@@ -7,7 +8,7 @@ router = APIRouter(prefix="/audit", tags=["Audit & Verification"])
 @router.get("/chain")
 def get_audit_chain():
     """Retrieve complete tamper-evident audit ledger."""
-    chain = audit_repo.list_all()
+    chain = audit_service.get_all_records()
     if not chain:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -19,21 +20,21 @@ def get_audit_chain():
 @router.get("/verify")
 def verify_audit_integrity():
     """Verify cryptographic hash integrity of the entire audit chain."""
-    chain = audit_repo.list_all()
+    chain = audit_service.get_all_records()
     if not chain:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Cannot verify integrity: Audit ledger is empty."
         )
     
-    is_valid, bad_event_id = audit_repo.verify_chain_integrity()
-    if not is_valid:
+    verification = audit_service.verify_chain_integrity()
+    if not verification.is_valid:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail=f"Cryptographic integrity check failed at event ID: {bad_event_id}"
+            detail=f"Cryptographic integrity check failed at index: {verification.tampered_index}. Detail: {verification.error_detail}"
         )
     
-    return {"status": "VERIFIED", "message": "All cryptographic signatures in audit ledger are valid."}
+    return {"status": "VERIFIED", "message": "All cryptographic signatures in audit ledger are valid.", "is_valid": True}
 
 
 @router.get("/{transaction_id}")

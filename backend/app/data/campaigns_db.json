@@ -1,4 +1,7 @@
 {
+  "merchant_config": {
+    "baseline_aov_inr": 3000.0
+  },
   "segments": [
     {
       "id": "seg_gamers_coders",
@@ -64,6 +67,149 @@
       "spent_budget_inr": 8100.0,
       "conversions": 54,
       "revenue_generated_inr": 161460.0,
+      "status": "ACTIVE"
+    },
+    {
+      "id": "camp_test_growth_01",
+      "title": "Developer Setup Bundle Blitz",
+      "target_segment": "Developers & Remote Workers",
+      "trigger_condition": "CART_SUBTOTAL_EXCEEDS_3000",
+      "bundle_offer": "Keychron K2 + Walnut Wrist Rest (5% OFF)",
+      "discount_percentage": 5.0,
+      "max_budget_inr": 10000.0,
+      "spent_budget_inr": 0.0,
+      "conversions": 0,
+      "revenue_generated_inr": 0.0,
+      "status": "ACTIVE"
+    },
+    {
+      "id": "camp_test_growth_01",
+      "title": "Developer Setup Bundle Blitz",
+      "target_segment": "Developers & Remote Workers",
+      "trigger_condition": "CART_SUBTOTAL_EXCEEDS_3000",
+      "bundle_offer": "Keychron K2 + Walnut Wrist Rest (5% OFF)",
+      "discount_percentage": 5.0,
+      "max_budget_inr": 10000.0,
+      "spent_budget_inr": 0.0,
+      "conversions": 0,
+      "revenue_generated_inr": 0.0,
+      "status": "ACTIVE"
+    },
+    {
+      "id": "camp_test_growth_01",
+      "title": "Developer Setup Bundle Blitz",
+      "target_segment": "Developers & Remote Workers",
+      "trigger_condition": "CART_SUBTOTAL_EXCEEDS_3000",
+      "bundle_offer": "Keychron K2 + Walnut Wrist Rest (5% OFF)",
+      "discount_percentage": 5.0,
+      "max_budget_inr": 10000.0,
+      "spent_budget_inr": 0.0,
+      "conversions": 0,
+      "revenue_generated_inr": 0.0,
+      "status": "ACTIVE"
+    },
+    {
+      "id": "camp_test_growth_01",
+      "title": "Developer Setup Bundle Blitz",
+      "target_segment": "Developers & Remote Workers",
+      "trigger_condition": "CART_SUBTOTAL_EXCEEDS_3000",
+      "bundle_offer": "Keychron K2 + Walnut Wrist Rest (5% OFF)",
+      "discount_percentage": 5.0,
+      "max_budget_inr": 10000.0,
+      "spent_budget_inr": 0.0,
+      "conversions": 0,
+      "revenue_generated_inr": 0.0,
+      "status": "ACTIVE"
+    },
+    {
+      "id": "camp_test_growth_01",
+      "title": "Developer Setup Bundle Blitz",
+      "target_segment": "Developers & Remote Workers",
+      "trigger_condition": "CART_SUBTOTAL_EXCEEDS_3000",
+      "bundle_offer": "Keychron K2 + Walnut Wrist Rest (5% OFF)",
+      "discount_percentage": 5.0,
+      "max_budget_inr": 10000.0,
+      "spent_budget_inr": 0.0,
+      "conversions": 0,
+      "revenue_generated_inr": 0.0,
+      "status": "ACTIVE"
+    },
+    {
+      "id": "camp_test_growth_01",
+      "title": "Developer Setup Bundle Blitz",
+      "target_segment": "Developers & Remote Workers",
+      "trigger_condition": "CART_SUBTOTAL_EXCEEDS_3000",
+      "bundle_offer": "Keychron K2 + Walnut Wrist Rest (5% OFF)",
+      "discount_percentage": 5.0,
+      "max_budget_inr": 10000.0,
+      "spent_budget_inr": 0.0,
+      "conversions": 0,
+      "revenue_generated_inr": 0.0,
+      "status": "ACTIVE"
+    },
+    {
+      "id": "camp_test_growth_01",
+      "title": "Developer Setup Bundle Blitz",
+      "target_segment": "Developers & Remote Workers",
+      "trigger_condition": "CART_SUBTOTAL_EXCEEDS_3000",
+      "bundle_offer": "Keychron K2 + Walnut Wrist Rest (5% OFF)",
+      "discount_percentage": 5.0,
+      "max_budget_inr": 10000.0,
+      "spent_budget_inr": 0.0,
+      "conversions": 0,
+      "revenue_generated_inr": 0.0,
+      "status": "ACTIVE"
+    },
+    {
+      "id": "camp_test_growth_01",
+      "title": "Developer Setup Bundle Blitz",
+      "target_segment": "Developers & Remote Workers",
+      "trigger_condition": "CART_SUBTOTAL_EXCEEDS_3000",
+      "bundle_offer": "Keychron K2 + Walnut Wrist Rest (5% OFF)",
+      "discount_percentage": 5.0,
+      "max_budget_inr": 10000.0,
+      "spent_budget_inr": 0.0,
+      "conversions": 0,
+      "revenue_generated_inr": 0.0,
+      "status": "ACTIVE"
+    },
+    {
+      "id": "camp_test_growth_01",
+      "title": "Developer Setup Bundle Blitz",
+      "target_segment": "Developers & Remote Workers",
+      "trigger_condition": "CART_SUBTOTAL_EXCEEDS_3000",
+      "bundle_offer": "Keychron K2 + Walnut Wrist Rest (5% OFF)",
+      "discount_percentage": 5.0,
+      "max_budget_inr": 10000.0,
+      "spent_budget_inr": 0.0,
+      "conversions": 0,
+      "revenue_generated_inr": 0.0,
+      "status": "ACTIVE"
+    },
+    {
+      "id": "camp_test_growth_01",
+      "title": "Developer Setup Bundle Blitz",
+      "target_segment": "Developers & Remote Workers",
+      "trigger_condition": "CART_SUBTOTAL_EXCEEDS_3000",
+      "bundle_offer": "Keychron K2 + Walnut Wrist Rest (5% OFF)",
+      "discount_percentage": 5.0,
+      "max_budget_inr": 10000.0,
+      "spent_budget_inr": 0.0,
+      "conversions": 0,
+      "revenue_generated_inr": 0.0,
+      "status": "ACTIVE"
+    },
+    {
+      "id": "camp_test_growth_01",
+      "title": "Developer Setup Bundle Blitz",
+      "target_segment": "Developers & Remote Workers",
+      "trigger_condition": "CART_SUBTOTAL_EXCEEDS_3000",
+      "bundle_offer": "Keychron K2 + Walnut Wrist Rest (5% OFF)",
+      "discount_percentage": 5.0,
+      "max_budget_inr": 10000.0,
+      "spent_budget_inr": 0.0,
+      "conversions": 0,
+      "revenue_generated_inr": 0.0,
       "status": "ACTIVE"
     },
     {

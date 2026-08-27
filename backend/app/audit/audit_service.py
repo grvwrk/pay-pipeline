@@ -25,6 +25,8 @@ class AuditService:
         self._ensure_genesis()
 
     def _ensure_genesis(self):
+        from backend.app.database.db import init_db
+        init_db()
         latest = audit_repo.get_latest()
         if not latest:
             genesis_data = {
@@ -258,7 +260,7 @@ class AuditService:
         return AuditChainVerificationResult(
             is_valid=True,
             total_records=len(chain),
-            genesis_hash=len(chain),
+            genesis_hash=self.GENESIS_HASH,
             latest_hash=latest_h,
             tampered_index=None,
             error_detail=None

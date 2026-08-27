@@ -1,18 +1,12 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, status
 from pydantic import BaseModel, Field
 from typing import Optional
 
 from backend.app.config import settings
 from backend.app.tools.money_tools import money_tools
-from backend.app.database.repositories import payment_repo
-
-from fastapi import APIRouter, HTTPException, status
-from backend.app.database.repositories import order_repo
-from backend.app.config import settings
+from backend.app.database.repositories import payment_repo, order_repo
 
 router = APIRouter(prefix="/payments", tags=["Payment Integration"])
-
-router = APIRouter(prefix="/payments", tags=["Payment initiation"])
 
 
 @router.get("/checkout-config")

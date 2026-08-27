@@ -44,20 +44,9 @@ class DeterministicPolicyEngine:
     def register_human_approval(
         self,
         token: str,
-        user_id: str,
-        amount: float,
-        cart_id: str,
-        reason: str,
         db: Optional[Session] = None
     ):
-        return approval_repo.create_approval(
-            token=token,
-            user_id=user_id,
-            amount=amount,
-            cart_id=cart_id,
-            reason=reason,
-            db=db
-        )
+        return approval_repo.approve(token, db=db)
 
     def evaluate_refund(
         self,

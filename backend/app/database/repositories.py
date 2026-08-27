@@ -276,6 +276,43 @@ class CartRepository:
             if not db:
                 s.close()
 
+    def list_carts(self, limit: int = 1000, db: Optional[Session] = None) -> List[Cart]:
+        s = db or SessionLocal()
+        try:
+            models = s.query(CartModel).order_by(CartModel.created_at.desc()).limit(limit).all()
+            results = []
+            for cm in models:
+                items = [
+                    CartItem(
+                        product_id=im.product_id,
+                        name=im.name,
+                        price=im.price,
+                        quantity=im.quantity,
+                        subtotal=im.subtotal,
+                        category=im.category
+                    ) for im in cm.items
+                ]
+                bundle = None
+                if cm.applied_bundle_json:
+                    try:
+                        bundle = BundleOffer(**json.loads(cm.applied_bundle_json))
+                    except Exception:
+                        bundle = None
+                results.append(Cart(
+                    cart_id=cm.cart_id,
+                    user_id=cm.user_id,
+                    currency=cm.currency,
+                    items=items,
+                    subtotal_amount=cm.subtotal_amount,
+                    discount_amount=cm.discount_amount,
+                    total_amount=cm.total_amount,
+                    applied_bundle=bundle
+                ))
+            return results
+        finally:
+            if not db:
+                s.close()
+
 
 class OrderRepository:
     def create_order(self, order: RazorpayOrder, db: Optional[Session] = None) -> RazorpayOrder:
@@ -347,10 +384,13 @@ class OrderRepository:
             if not db:
                 s.close()
 
-    def list_orders(self, user_id: str, db: Optional[Session] = None) -> List[RazorpayOrder]:
+    def list_orders(self, user_id: Optional[str] = None, limit: int = 1000, db: Optional[Session] = None) -> List[RazorpayOrder]:
         s = db or SessionLocal()
         try:
-            models = s.query(OrderModel).filter(OrderModel.user_id == user_id).all()
+            query = s.query(OrderModel)
+            if user_id:
+                query = query.filter(OrderModel.user_id == user_id)
+            models = query.order_by(OrderModel.created_at.desc()).limit(limit).all()
             results = []
             for om in models:
                 results.append(RazorpayOrder(
@@ -776,6 +816,40 @@ class AuditRepository:
                     explainability_notes=am.explainability_notes or ""
                 ))
             return results
+        finally:
+            if not db:
+                s.close()
+
+    def get_by_transaction_id(self, transaction_id: str, db: Optional[Session] = None) -> Optional[AuditRecord]:
+        s = db or SessionLocal()
+        try:
+            am = s.query(AuditRecordModel).filter(AuditRecordModel.event_id == transaction_id).first()
+            if not am:
+                return None
+            try:
+                args = json.loads(am.arguments_json or "{}")
+            except Exception:
+                args = {}
+            return AuditRecord(
+                index=am.index,
+                timestamp=am.timestamp,
+                event_id=am.event_id,
+                prev_hash=am.prev_hash,
+                record_hash=am.record_hash,
+                actor_id=am.actor_id,
+                actor_role=am.actor_role,
+                action=am.action,
+                intent=am.intent,
+                tool_name=am.tool_name,
+                arguments=args,
+                guardrail_decision=am.guardrail_decision,
+                approval_required=am.approval_required,
+                transaction_state=am.transaction_state,
+                result_status=am.result_status,
+                signature=am.signature,
+                latency_ms=am.latency_ms or 0.0,
+                explainability_notes=am.explainability_notes or ""
+            )
         finally:
             if not db:
                 s.close()

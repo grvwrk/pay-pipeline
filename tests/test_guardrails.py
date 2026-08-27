@@ -5,6 +5,10 @@ from backend.app.guardrails.policy_engine import DeterministicPolicyEngine
 from backend.app.guardrails.idempotency import idempotency_manager
 from backend.app.guardrails.spend_limiter import spend_limiter
 
+@pytest.fixture(autouse=True)
+def reset_default_buyer_spend():
+    spend_limiter.reset_spend("user_default_buyer")
+
 def test_guardrail_spend_limit_denial():
     engine = DeterministicPolicyEngine()
     cart = Cart()

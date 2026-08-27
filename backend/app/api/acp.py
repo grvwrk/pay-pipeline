@@ -95,7 +95,7 @@ def get_quote(req: ACPQuoteRequest):
     policy_res = policy_engine.evaluate(cart=cart, user_id=req.agent_id)
 
     quote_id = f"quote_{uuid.uuid4().hex[:10]}"
-    expires_at = datetime.now(timezone.utc) + timedelta(seconds=300)
+    expires_at = datetime.now(timezone.utc) + timedelta(seconds=settings.ACP_QUOTE_EXPIRATION_SECONDS)
     # Preserve the exact priced cart. Checkout may not substitute an arbitrary
     # catalog item when a quote is missing or expired.
     _quotes_db[quote_id] = {"cart": cart.model_copy(deep=True), "expires_at": expires_at}
@@ -108,7 +108,7 @@ def get_quote(req: ACPQuoteRequest):
         total_amount=cart.total_amount,
         currency="INR",
         guardrail_precheck="PASS" if policy_res.allowed else "DENIED",
-        expires_in_seconds=300,
+        expires_in_seconds=settings.ACP_QUOTE_EXPIRATION_SECONDS,
         expires_at=expires_at.isoformat()
     )
 

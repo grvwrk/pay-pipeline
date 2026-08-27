@@ -1,9 +1,14 @@
 import pytest
 from backend.app.tools.dispatcher import tool_dispatcher, ToolRiskLevel
+from backend.app.tools import read_tools, money_tools
 
 
 def test_tool_dispatcher_risk_and_execution():
-    res = tool_dispatcher.execute("get_product", {"product_id": "sku_kb_keychron_k2"})
+    res = tool_dispatcher.execute(
+        "get_product",
+        {"product_id": "sku_kb_keychron_k2"},
+        context={"user_id": "test_user_01"}
+    )
     assert res.success
     assert res.risk_level == ToolRiskLevel.LOW
     assert res.data is not None
@@ -12,7 +17,11 @@ def test_tool_dispatcher_risk_and_execution():
 
 
 def test_tool_dispatcher_unknown_tool_rejection():
-    res = tool_dispatcher.execute("unauthorized_money_mover", {"amount": 99999})
+    res = tool_dispatcher.execute(
+        "unauthorized_money_mover",
+        {"amount": 99999},
+        context={"user_id": "test_user_01"}
+    )
     assert not res.success
     assert "Unauthorized or unrecognized tool" in res.error
     assert res.guardrail_decision == "REJECTED"

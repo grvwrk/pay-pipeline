@@ -78,9 +78,12 @@ class PrivilegedMoneyTools:
             explainability_notes=f"Order {order.order_id} created on Razorpay test rails for ₹{order.amount:,.2f}."
         )
 
+        payment_link = razorpay_client.create_payment_link(order)
+
         return {
             "success": True,
             "order": order.model_dump(),
+            "payment_link": payment_link,
             "policy_evaluation": policy_res.model_dump()
         }
 

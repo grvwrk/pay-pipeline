@@ -15,7 +15,11 @@ def test_tavily_search_engine_basic():
 
 
 def test_tavily_search_registered_in_dispatcher():
-    res = tool_dispatcher.execute("tavily_search", {"query": "Pintola high protein peanut butter", "max_results": 2})
+    res = tool_dispatcher.execute(
+        "tavily_search",
+        {"query": "Pintola high protein peanut butter", "max_results": 2},
+        context={"user_id": "test_user_01"}
+    )
     assert res.success
     assert res.risk_level == ToolRiskLevel.LOW
     assert res.data is not None
@@ -24,7 +28,11 @@ def test_tavily_search_registered_in_dispatcher():
 
 
 def test_web_search_alias_in_dispatcher():
-    res = tool_dispatcher.execute("web_search", {"query": "Nike Pegasus 40 running shoe specs", "max_results": 2})
+    res = tool_dispatcher.execute(
+        "web_search",
+        {"query": "Nike Pegasus 40 running shoe specs", "max_results": 2},
+        context={"user_id": "test_user_01"}
+    )
     assert res.success
     assert res.risk_level == ToolRiskLevel.LOW
     assert res.data is not None

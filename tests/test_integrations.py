@@ -5,9 +5,8 @@ from backend.app.payment.razorpay_client import RazorpayApiError, RazorpayClient
 
 
 def test_catalog_agent_is_offline_without_groq_configuration():
-    result = groq_catalog_agent.run("mechanical keyboard", "mechanical_keyboards", 5000)
-    assert result.provider == "deterministic"
-    assert result.products
+    with pytest.raises(RuntimeError, match="Groq"):
+        groq_catalog_agent.run("mechanical keyboard", "mechanical_keyboards", 5000)
 
 
 def test_razorpay_mode_requires_environment_credentials(monkeypatch):

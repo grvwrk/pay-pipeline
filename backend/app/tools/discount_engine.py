@@ -13,6 +13,8 @@ class DiscountBreakdown(BaseModel):
     applied_rules: List[str] = Field(default_factory=list)
 
 
+from backend.app.config import settings
+
 class DeterministicDiscountEngine:
     """
     Deterministic Discount Engine.
@@ -20,16 +22,25 @@ class DeterministicDiscountEngine:
     and promo rules bounded by merchant policy. Never trusts LLM-generated amounts.
     """
 
-    TIER_1_THRESHOLD: float = 3000.0
-    TIER_1_RATE: float = 0.10          # 10% discount on carts > ₹3,000
-    TIER_1_MAX_CAP: float = 500.0      # Capped at ₹500 max
+    @property
+    def TIER_1_THRESHOLD(self) -> float:
+        return settings.DISCOUNT_TIER_1_THRESHOLD
 
-    BUNDLE_DISCOUNT_RATE: float = 0.05  # 5% discount on bundled accessories
+    @property
+    def TIER_1_RATE(self) -> float:
+        return settings.DISCOUNT_TIER_1_RATE
 
-    PROMO_CODES = {
-        "GROWTH10": {"rate": 0.10, "max_discount": 500.0, "min_subtotal": 2000.0},
-        "SAVE15": {"rate": 0.15, "max_discount": 750.0, "min_subtotal": 4000.0},
-    }
+    @property
+    def TIER_1_MAX_CAP(self) -> float:
+        return settings.DISCOUNT_TIER_1_MAX_CAP
+
+    @property
+    def BUNDLE_DISCOUNT_RATE(self) -> float:
+        return settings.DISCOUNT_BUNDLE_DISCOUNT_RATE
+
+    @property
+    def PROMO_CODES(self) -> Dict[str, Dict[str, Any]]:
+        return settings.DISCOUNT_PROMO_CODES
 
     def calculate_discount(
         self,

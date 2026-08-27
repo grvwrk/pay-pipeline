@@ -54,6 +54,7 @@ class Settings(BaseModel):
 
     # Database
     DATABASE_URL: str = "sqlite:///./pay_pipeline.db"
+    CATALOG_DB_PATH: str = "backend/app/data/catalog_db.json"
 
     # Credentials & Payment Rail
     PAYMENT_PROVIDER_MODE: str = "simulator"
@@ -103,6 +104,27 @@ class Settings(BaseModel):
     # Source metadata
     CONFIG_FILE_PATH: Optional[str] = None
 
+    # Discount Engine configuration
+    DISCOUNT_TIER_1_THRESHOLD: float = 3000.0
+    DISCOUNT_TIER_1_RATE: float = 0.10
+    DISCOUNT_TIER_1_MAX_CAP: float = 500.0
+    DISCOUNT_BUNDLE_DISCOUNT_RATE: float = 0.05
+    DISCOUNT_PROMO_CODES: Dict[str, Dict[str, float]] = Field(default_factory=lambda: {
+        "GROWTH10": {"rate": 0.10, "max_discount": 500.0, "min_subtotal": 2000.0},
+        "SAVE15": {"rate": 0.15, "max_discount": 750.0, "min_subtotal": 4000.0},
+    })
+
+    # Payment Links defaults
+    PAYMENT_CUSTOMER_NAME: str = "pay-pipeline Buyer"
+    PAYMENT_CUSTOMER_CONTACT: str = "+919999999999"
+    PAYMENT_CUSTOMER_EMAIL: str = "buyer@pay-pipeline.com"
+
+    # ACP configurations
+    ACP_QUOTE_EXPIRATION_SECONDS: int = 300
+
+    # Merchant analytics
+    MERCHANT_BASELINE_AOV_INR: float = 3000.0
+
 
 def load_settings(config_path: Optional[str] = None) -> Settings:
     """
@@ -122,6 +144,7 @@ def load_settings(config_path: Optional[str] = None) -> Settings:
     search_cfg = yaml_data.get("search", {})
     guardrails_cfg = yaml_data.get("guardrails", {})
     merchant_cfg = yaml_data.get("merchant", {})
+    discount_cfg = yaml_data.get("discount", {})
 
     def _parse_bool(val: Any) -> bool:
         if isinstance(val, bool):
@@ -171,6 +194,12 @@ def load_settings(config_path: Optional[str] = None) -> Settings:
         or db_cfg.get("db_url")
         or yaml_data.get("DATABASE_URL")
         or "sqlite:///./pay_pipeline.db"
+    )
+    catalog_db_path = (
+        os.getenv("CATALOG_DB_PATH")
+        or db_cfg.get("catalog_db_path")
+        or yaml_data.get("CATALOG_DB_PATH")
+        or "backend/app/data/catalog_db.json"
     )
 
     # 2. Payment settings
@@ -322,6 +351,77 @@ def load_settings(config_path: Optional[str] = None) -> Settings:
         or "pay-pipeline Store"
     )
 
+    # 7. Discount settings
+    discount_tier_1_threshold = _parse_float(
+        os.getenv("DISCOUNT_TIER_1_THRESHOLD")
+        or discount_cfg.get("tier_1_threshold_inr")
+        or discount_cfg.get("default_tier_1_threshold_inr")
+        or yaml_data.get("DISCOUNT_TIER_1_THRESHOLD"),
+        default=3000.0
+    )
+    discount_tier_1_rate = _parse_float(
+        os.getenv("DISCOUNT_TIER_1_RATE")
+        or discount_cfg.get("tier_1_rate")
+        or yaml_data.get("DISCOUNT_TIER_1_RATE"),
+        default=0.10
+    )
+    discount_tier_1_max_cap = _parse_float(
+        os.getenv("DISCOUNT_TIER_1_MAX_CAP")
+        or discount_cfg.get("tier_1_max_cap_inr")
+        or yaml_data.get("DISCOUNT_TIER_1_MAX_CAP"),
+        default=500.0
+    )
+    discount_bundle_discount_rate = _parse_float(
+        os.getenv("DISCOUNT_BUNDLE_DISCOUNT_RATE")
+        or discount_cfg.get("bundle_discount_rate")
+        or yaml_data.get("DISCOUNT_BUNDLE_DISCOUNT_RATE"),
+        default=0.05
+    )
+    discount_promo_codes = (
+        discount_cfg.get("promo_codes")
+        or yaml_data.get("DISCOUNT_PROMO_CODES")
+        or {
+            "GROWTH10": {"rate": 0.10, "max_discount": 500.0, "min_subtotal": 2000.0},
+            "SAVE15": {"rate": 0.15, "max_discount": 750.0, "min_subtotal": 4000.0},
+        }
+    )
+
+    # 8. Payment Links Customer defaults
+    payment_customer_name = (
+        os.getenv("PAYMENT_CUSTOMER_NAME")
+        or payment_cfg.get("customer_name")
+        or yaml_data.get("PAYMENT_CUSTOMER_NAME")
+        or "pay-pipeline Buyer"
+    )
+    payment_customer_contact = (
+        os.getenv("PAYMENT_CUSTOMER_CONTACT")
+        or payment_cfg.get("customer_contact")
+        or yaml_data.get("PAYMENT_CUSTOMER_CONTACT")
+        or "+919999999999"
+    )
+    payment_customer_email = (
+        os.getenv("PAYMENT_CUSTOMER_EMAIL")
+        or payment_cfg.get("customer_email")
+        or yaml_data.get("PAYMENT_CUSTOMER_EMAIL")
+        or "buyer@pay-pipeline.com"
+    )
+
+    # 9. ACP Quote Expiration
+    acp_quote_expiration = _parse_int(
+        os.getenv("ACP_QUOTE_EXPIRATION_SECONDS")
+        or guardrails_cfg.get("quote_expiration_seconds")
+        or yaml_data.get("ACP_QUOTE_EXPIRATION_SECONDS"),
+        default=300
+    )
+
+    # 10. Merchant Baseline AOV
+    merchant_baseline_aov = _parse_float(
+        os.getenv("MERCHANT_BASELINE_AOV_INR")
+        or merchant_cfg.get("baseline_aov_inr")
+        or yaml_data.get("MERCHANT_BASELINE_AOV_INR"),
+        default=3000.0
+    )
+
     return Settings(
         PROJECT_NAME=project_name,
         API_V1_STR=api_v1_str,
@@ -350,6 +450,17 @@ def load_settings(config_path: Optional[str] = None) -> Settings:
         MERCHANT_ID=merchant_id,
         MERCHANT_NAME=merchant_name,
         CONFIG_FILE_PATH=str(cfg_file) if cfg_file else None,
+        CATALOG_DB_PATH=catalog_db_path,
+        DISCOUNT_TIER_1_THRESHOLD=discount_tier_1_threshold,
+        DISCOUNT_TIER_1_RATE=discount_tier_1_rate,
+        DISCOUNT_TIER_1_MAX_CAP=discount_tier_1_max_cap,
+        DISCOUNT_BUNDLE_DISCOUNT_RATE=discount_bundle_discount_rate,
+        DISCOUNT_PROMO_CODES=discount_promo_codes,
+        PAYMENT_CUSTOMER_NAME=payment_customer_name,
+        PAYMENT_CUSTOMER_CONTACT=payment_customer_contact,
+        PAYMENT_CUSTOMER_EMAIL=payment_customer_email,
+        ACP_QUOTE_EXPIRATION_SECONDS=acp_quote_expiration,
+        MERCHANT_BASELINE_AOV_INR=merchant_baseline_aov,
     )
 
 

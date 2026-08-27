@@ -112,11 +112,13 @@ class GroqCatalogAgent:
     def classify_intent(self, query: str) -> IntentClassificationResult:
         """Classify user query and extract entities via Groq JSON mode."""
         if not settings.GROQ_API_KEY:
-            logger.warning("GROQ_API_KEY is not set. Falling back to default intent classification.")
-            return IntentClassificationResult(entities={"query": query})
+            raise RuntimeError("GROQ_API_KEY is not set. Groq LLM provider is required for intent classification.")
 
         try:
             from groq import Groq
+        except ImportError as e:
+            raise RuntimeError("groq python library is not installed. Groq LLM provider is required.") from e
+        try:
             client = Groq(api_key=settings.GROQ_API_KEY)
             prompt = (
                 "You are an Intent Router & Entity Extractor for an E-commerce platform.\n"
@@ -168,17 +170,18 @@ class GroqCatalogAgent:
             )
         except Exception as exc:
             logger.error("Intent classification failed for query '%s': %s", query, exc, exc_info=True)
-            return IntentClassificationResult(entities={"query": query})
+            raise
 
     def run(self, query: str, category: Optional[str] = None, max_price: Optional[float] = None) -> CatalogAgentResult:
         """Execute multi-turn tool calling using Groq tool dispatches."""
         if not settings.GROQ_API_KEY:
-            logger.warning("GROQ_API_KEY not set. Falling back to direct database search.")
-            products = read_tools.catalog_lookup(ProductFilter(query=query, category=category, max_price=max_price))
-            return CatalogAgentResult(products=products)
+            raise RuntimeError("GROQ_API_KEY is not set. Groq LLM provider is required for catalog agent search.")
 
         try:
             from groq import Groq
+        except ImportError as e:
+            raise RuntimeError("groq python library is not installed. Groq LLM provider is required.") from e
+        try:
             client = Groq(api_key=settings.GROQ_API_KEY)
             messages = [
                 {
@@ -301,8 +304,7 @@ class GroqCatalogAgent:
 
         except Exception as exc:
             logger.error("Catalog agent run loop crashed for query '%s': %s", query, exc, exc_info=True)
-            products = read_tools.catalog_lookup(ProductFilter(query=query, category=category, max_price=max_price))
-            return CatalogAgentResult(products=products)
+            raise
 
 
 groq_catalog_agent = GroqCatalogAgent()

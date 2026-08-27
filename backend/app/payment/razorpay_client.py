@@ -3,6 +3,7 @@ import hmac
 import hashlib
 import json
 import uuid
+import logging
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 from typing import Dict, Any, Optional
@@ -11,6 +12,8 @@ from backend.app.config import settings
 from backend.app.models.order import RazorpayOrder, PaymentCaptureResult, RefundResult, TransactionState
 from backend.app.database.repositories import order_repo, payment_repo, refund_repo, spend_repo
 from backend.app.payment.state_machine import state_machine
+
+logger = logging.getLogger(__name__)
 
 
 class RazorpayApiError(RuntimeError):
@@ -202,6 +205,42 @@ class RazorpayClientWrapper:
 
     def fetch_order(self, order_id: str, db: Optional[Session] = None) -> Optional[RazorpayOrder]:
         return order_repo.get_order(order_id, db=db)
+
+    def create_payment_link(self, order: RazorpayOrder) -> Optional[str]:
+        if not self.key_id or not settings.RAZORPAY_KEY_SECRET:
+            logger.warning("RAZORPAY_KEY_ID or RAZORPAY_KEY_SECRET is not set. Skipping payment link creation.")
+            return None
+        body = json.dumps({
+            "amount": int(round(order.amount * 100)),
+            "currency": "INR",
+            "accept_partial": False,
+            "reference_id": order.order_id,
+            "description": f"Payment for Order {order.order_id}",
+            "customer": {
+                "name": settings.PAYMENT_CUSTOMER_NAME,
+                "contact": settings.PAYMENT_CUSTOMER_CONTACT,
+                "email": settings.PAYMENT_CUSTOMER_EMAIL
+            },
+            "notify": {
+                "sms": False,
+                "email": False
+            },
+            "reminder_enable": False
+        }).encode("utf-8")
+        credentials = base64.b64encode(f"{self.key_id}:{settings.RAZORPAY_KEY_SECRET}".encode("utf-8")).decode("ascii")
+        request = Request(
+            "https://api.razorpay.com/v1/payment_links",
+            data=body,
+            method="POST",
+            headers={"Authorization": f"Basic {credentials}", "Content-Type": "application/json"}
+        )
+        try:
+            with urlopen(request, timeout=15) as response:
+                payload = json.loads(response.read().decode("utf-8"))
+                return payload["short_url"]
+        except Exception as error:
+            logger.error(f"Failed to create Razorpay payment link for Order ID '{order.order_id}': {error}")
+            return None
 
     def fetch_payment(self, payment_id: str, db: Optional[Session] = None) -> Optional[PaymentCaptureResult]:
         return payment_repo.get_payment(payment_id, db=db)

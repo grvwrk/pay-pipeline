@@ -2,7 +2,32 @@ import pytest
 from backend.app.api.merchant import get_merchant_analytics, create_campaign
 from backend.app.models.campaign import Campaign
 
+from backend.app.database.db import init_db
+from backend.app.database.repositories import order_repo, cart_repo
+from backend.app.models.order import RazorpayOrder, TransactionState
+from backend.app.models.cart import Cart
+
 def test_merchant_growth_kpis():
+    init_db()
+    
+    # Seed a cart
+    cart = Cart(cart_id="cart_test_merchant_123", user_id="user_merchant_123")
+    cart_repo.save_cart(cart)
+    
+    # Seed a captured order with bundle applied and amount > baseline_aov (3000)
+    order = RazorpayOrder(
+        order_id="order_test_merchant_123",
+        cart_id="cart_test_merchant_123",
+        amount=4500.0,
+        amount_in_paise=450000,
+        currency="INR",
+        status="paid",
+        receipt="rcpt_merchant_123",
+        state=TransactionState.PAYMENT_CAPTURED,
+        notes={"user_id": "user_merchant_123", "bundle_applied": "true"}
+    )
+    order_repo.create_order(order)
+
     data = get_merchant_analytics()
     assert "kpis" in data
     kpis = data["kpis"]
