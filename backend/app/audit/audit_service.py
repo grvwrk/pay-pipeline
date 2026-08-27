@@ -1,5 +1,7 @@
 import uuid
 import datetime
+import json
+import logging
 from typing import List, Optional, Dict, Any
 from backend.app.models.audit import AuditRecord, AuditChainVerificationResult, ExplainabilityReport
 from backend.app.audit.signer import sign_data, verify_signature
@@ -7,7 +9,8 @@ from backend.app.audit.hash_chain import compute_record_hash
 from backend.app.database.repositories import audit_repo
 from backend.app.database.db import SessionLocal
 from backend.app.database.models import AuditRecordModel
-import json
+
+logger = logging.getLogger(__name__)
 
 
 class AuditService:
@@ -30,24 +33,55 @@ class AuditService:
                 "version": "1.0.0"
             }
             timestamp = datetime.datetime.now(datetime.timezone.utc).isoformat()
-            record_hash = compute_record_hash(self.GENESIS_HASH, 0, timestamp, "SYSTEM", "GENESIS_INITIALIZATION", genesis_data)
-            sig = sign_data({"index": 0, "hash": record_hash, "data": genesis_data})
+            actor_id = "SYSTEM"
+            actor_role = "AUDIT_ENGINE"
+            action = "GENESIS_INITIALIZATION"
+            intent = "SYSTEM_BOOT"
+            guardrail_decision = "APPROVED"
+            transaction_state = "INITIALIZED"
+            result_status = "SUCCESS"
+
+            record_hash = compute_record_hash(
+                prev_hash=self.GENESIS_HASH,
+                index=0,
+                timestamp=timestamp,
+                actor_id=actor_id,
+                actor_role=actor_role,
+                action=action,
+                intent=intent,
+                arguments=genesis_data,
+                guardrail_decision=guardrail_decision,
+                transaction_state=transaction_state,
+                result_status=result_status
+            )
+            
+            sig = sign_data({
+                "index": 0,
+                "hash": record_hash,
+                "actor_id": actor_id,
+                "action": action,
+                "arguments": genesis_data,
+                "guardrail_decision": guardrail_decision,
+                "transaction_state": transaction_state,
+                "result_status": result_status
+            })
+
             genesis_record = AuditRecord(
                 index=0,
                 timestamp=timestamp,
                 event_id="evt_genesis_0000",
                 prev_hash=self.GENESIS_HASH,
                 record_hash=record_hash,
-                actor_id="SYSTEM",
-                actor_role="AUDIT_ENGINE",
-                action="GENESIS_INITIALIZATION",
-                intent="SYSTEM_BOOT",
+                actor_id=actor_id,
+                actor_role=actor_role,
+                action=action,
+                intent=intent,
                 tool_name=None,
                 arguments=genesis_data,
-                guardrail_decision="APPROVED",
+                guardrail_decision=guardrail_decision,
                 approval_required=False,
-                transaction_state="INITIALIZED",
-                result_status="SUCCESS",
+                transaction_state=transaction_state,
+                result_status=result_status,
                 signature=sig,
                 explainability_notes="Genesis block initializing immutable cryptographic ledger for pay-pipeline."
             )
@@ -77,23 +111,31 @@ class AuditService:
         prev_hash = latest.record_hash if latest else self.GENESIS_HASH
         timestamp = datetime.datetime.now(datetime.timezone.utc).isoformat()
         event_id = f"evt_{uuid.uuid4().hex[:12]}"
+        safe_arguments = arguments or {}
 
         record_hash = compute_record_hash(
-            prev_hash,
-            new_index,
-            timestamp,
-            actor_id,
-            action,
-            arguments
+            prev_hash=prev_hash,
+            index=new_index,
+            timestamp=timestamp,
+            actor_id=actor_id,
+            actor_role=actor_role,
+            action=action,
+            intent=intent or "",
+            arguments=safe_arguments,
+            guardrail_decision=guardrail_decision or "",
+            transaction_state=transaction_state or "",
+            result_status=result_status
         )
 
         sig = sign_data({
             "index": new_index,
             "hash": record_hash,
-            "actor": actor_id,
+            "actor_id": actor_id,
             "action": action,
-            "arguments": arguments,
-            "guardrail_decision": guardrail_decision
+            "arguments": safe_arguments,
+            "guardrail_decision": guardrail_decision or "",
+            "transaction_state": transaction_state or "",
+            "result_status": result_status
         })
 
         record = AuditRecord(
@@ -107,7 +149,7 @@ class AuditService:
             action=action,
             intent=intent,
             tool_name=tool_name,
-            arguments=arguments,
+            arguments=safe_arguments,
             guardrail_decision=guardrail_decision,
             approval_required=approval_required,
             transaction_state=transaction_state,
@@ -138,7 +180,7 @@ class AuditService:
         with SessionLocal() as db:
             m = db.query(AuditRecordModel).filter(AuditRecordModel.index == target_index).first()
             if m:
-                m.arguments_json = json.dumps(original_arguments)
+                m.arguments_json = json.dumps(original_arguments, default=str)
                 db.commit()
 
     def verify_chain_integrity(self) -> AuditChainVerificationResult:
@@ -156,10 +198,7 @@ class AuditService:
         latest_h = chain[-1].record_hash
 
         for i, record in enumerate(chain):
-            if i == 0:
-                expected_prev = self.GENESIS_HASH
-            else:
-                expected_prev = chain[i - 1].record_hash
+            expected_prev = self.GENESIS_HASH if i == 0 else chain[i - 1].record_hash
 
             if record.prev_hash != expected_prev:
                 return AuditChainVerificationResult(
@@ -172,12 +211,17 @@ class AuditService:
                 )
 
             recomputed_hash = compute_record_hash(
-                record.prev_hash,
-                record.index,
-                record.timestamp,
-                record.actor_id,
-                record.action,
-                record.arguments
+                prev_hash=record.prev_hash,
+                index=record.index,
+                timestamp=record.timestamp,
+                actor_id=record.actor_id,
+                actor_role=record.actor_role,
+                action=record.action,
+                intent=record.intent or "",
+                arguments=record.arguments or {},
+                guardrail_decision=record.guardrail_decision or "",
+                transaction_state=record.transaction_state or "",
+                result_status=record.result_status or ""
             )
 
             if record.record_hash != recomputed_hash:
@@ -193,13 +237,15 @@ class AuditService:
             sig_valid = verify_signature({
                 "index": record.index,
                 "hash": record.record_hash,
-                "actor": record.actor_id,
+                "actor_id": record.actor_id,
                 "action": record.action,
-                "arguments": record.arguments,
-                "guardrail_decision": record.guardrail_decision
+                "arguments": record.arguments or {},
+                "guardrail_decision": record.guardrail_decision or "",
+                "transaction_state": record.transaction_state or "",
+                "result_status": record.result_status or ""
             }, record.signature)
 
-            if not sig_valid and record.index != 0:
+            if not sig_valid:
                 return AuditChainVerificationResult(
                     is_valid=False,
                     total_records=len(chain),
@@ -212,7 +258,7 @@ class AuditService:
         return AuditChainVerificationResult(
             is_valid=True,
             total_records=len(chain),
-            genesis_hash=self.GENESIS_HASH,
+            genesis_hash=len(chain),
             latest_hash=latest_h,
             tampered_index=None,
             error_detail=None
@@ -222,7 +268,7 @@ class AuditService:
         chain = audit_repo.get_all()
         related_records = []
         for r in chain:
-            args = r.arguments or {}
+            args = r.arguments if isinstance(r.arguments, dict) else {}
             if args.get("order_id") == order_id or args.get("cart_id") == order_id or r.event_id == order_id:
                 related_records.append(r)
 
