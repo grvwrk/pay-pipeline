@@ -1,8 +1,9 @@
 import json
 import re
 from datetime import datetime, timezone
-from typing import List, Optional, Dict, Any, Tuple
+from typing import List, Optional, Dict, Any
 from sqlalchemy.orm import Session
+from sqlalchemy import func
 from backend.app.database.db import SessionLocal
 from backend.app.database.models import (
     ProductModel, CartModel, CartItemModel, OrderModel,
@@ -240,6 +241,43 @@ class CartRepository:
             if not db:
                 s.close()
 
+    def clear_cart(self, cart_id: str, db: Optional[Session] = None) -> bool:
+        s = db or SessionLocal()
+        try:
+            s.query(CartItemModel).filter(CartItemModel.cart_id == cart_id).delete()
+            cm = s.query(CartModel).filter(CartModel.cart_id == cart_id).first()
+            if cm:
+                cm.subtotal_amount = 0.0
+                cm.discount_amount = 0.0
+                cm.total_amount = 0.0
+                cm.applied_bundle_json = None
+            if not db:
+                s.commit()
+            return True
+        except Exception:
+            if not db:
+                s.rollback()
+            raise
+        finally:
+            if not db:
+                s.close()
+
+    def delete_cart(self, cart_id: str, db: Optional[Session] = None) -> bool:
+        s = db or SessionLocal()
+        try:
+            s.query(CartItemModel).filter(CartItemModel.cart_id == cart_id).delete()
+            rows = s.query(CartModel).filter(CartModel.cart_id == cart_id).delete()
+            if not db:
+                s.commit()
+            return rows > 0
+        except Exception:
+            if not db:
+                s.rollback()
+            raise
+        finally:
+            if not db:
+                s.close()
+
 
 class OrderRepository:
     def create_order(self, order: RazorpayOrder, db: Optional[Session] = None) -> RazorpayOrder:
@@ -307,6 +345,29 @@ class OrderRepository:
             if not db:
                 s.rollback()
             raise
+        finally:
+            if not db:
+                s.close()
+
+    def list_orders(self, user_id: str, db: Optional[Session] = None) -> List[RazorpayOrder]:
+        s = db or SessionLocal()
+        try:
+            models = s.query(OrderModel).filter(OrderModel.user_id == user_id).all()
+            results = []
+            for om in models:
+                results.append(RazorpayOrder(
+                    order_id=om.order_id,
+                    cart_id=om.cart_id,
+                    amount=om.amount,
+                    amount_in_paise=om.amount_in_paise,
+                    currency=om.currency,
+                    status=om.status,
+                    receipt=om.receipt or "",
+                    notes=om.notes,
+                    state=TransactionState(om.state) if om.state in TransactionState._value2member_map_ else TransactionState.ORDER_CREATED,
+                    idempotency_key=om.idempotency_key
+                ))
+            return results
         finally:
             if not db:
                 s.close()
@@ -410,17 +471,69 @@ class RefundRepository:
             if not db:
                 s.close()
 
+    def get_refund(self, refund_id: str, db: Optional[Session] = None) -> Optional[RefundResult]:
+        s = db or SessionLocal()
+        try:
+            rm = s.query(RefundModel).filter(RefundModel.refund_id == refund_id).first()
+            if not rm:
+                return None
+            return RefundResult(
+                refund_id=rm.refund_id,
+                payment_id=rm.payment_id,
+                order_id=rm.order_id,
+                amount=rm.amount,
+                currency=rm.currency,
+                status=rm.status
+            )
+        finally:
+            if not db:
+                s.close()
+
+    def get_total_refunded(self, payment_id: str, db: Optional[Session] = None) -> float:
+        s = db or SessionLocal()
+        try:
+            result = s.query(func.sum(RefundModel.amount)).filter(
+                RefundModel.payment_id == payment_id,
+                RefundModel.status == "processed"
+            ).scalar()
+            return float(result or 0.0)
+        finally:
+            if not db:
+                s.close()
+
 
 class ApprovalRepository:
+    def create_approval(self, token: str, user_id: str, amount: float, cart_id: str, reason: str, db: Optional[Session] = None) -> ApprovalModel:
+        s = db or SessionLocal()
+        try:
+            app = ApprovalModel(
+                token=token,
+                user_id=user_id,
+                amount=amount,
+                cart_id=cart_id,
+                status="PENDING",
+                reason=reason
+            )
+            s.add(app)
+            if not db:
+                s.commit()
+            return app
+        except Exception:
+            if not db:
+                s.rollback()
+            raise
+        finally:
+            if not db:
+                s.close()
+
     def is_approved(self, token: str, max_age_seconds: int = 900, db: Optional[Session] = None) -> bool:
-        """Validates approval and verifies token age against expiry limit."""
+        """Validates approval and verifies token age against expiration limit."""
         s = db or SessionLocal()
         try:
             app = s.query(ApprovalModel).filter(ApprovalModel.token == token).first()
             if not app or app.status != "APPROVED":
                 return False
             
-            # Verify expiry (TTL)
             if app.approved_at:
                 now = datetime.now(timezone.utc)
                 app_time = app.approved_at if app.approved_at.tzinfo else app.approved_at.replace(tzinfo=timezone.utc)
@@ -431,8 +544,44 @@ class ApprovalRepository:
             if not db:
                 s.close()
 
+    def get_approval(self, token: str, db: Optional[Session] = None) -> Optional[ApprovalModel]:
+        s = db or SessionLocal()
+        try:
+            return s.query(ApprovalModel).filter(ApprovalModel.token == token).first()
+        finally:
+            if not db:
+                s.close()
+
+    def approve(self, token: str, db: Optional[Session] = None) -> bool:
+        s = db or SessionLocal()
+        try:
+            app = s.query(ApprovalModel).filter(ApprovalModel.token == token).first()
+            if app:
+                app.status = "APPROVED"
+                app.approved_at = datetime.now(timezone.utc)
+                if not db:
+                    s.commit()
+                return True
+            return False
+        except Exception:
+            if not db:
+                s.rollback()
+            raise
+        finally:
+            if not db:
+                s.close()
+
 
 class SpendRepository:
+    def get_user_cumulative_spend(self, user_id: str, db: Optional[Session] = None) -> float:
+        s = db or SessionLocal()
+        try:
+            record = s.query(UserSpendModel).filter(UserSpendModel.user_id == user_id).first()
+            return float(record.cumulative_spend_inr) if record else 0.0
+        finally:
+            if not db:
+                s.close()
+
     def record_spend(self, user_id: str, amount: float, db: Optional[Session] = None):
         """Atomic addition of user cumulative spend."""
         s = db or SessionLocal()
@@ -476,6 +625,108 @@ class SpendRepository:
             if not db:
                 s.close()
 
+    def reset_spend(self, user_id: str, db: Optional[Session] = None):
+        s = db or SessionLocal()
+        try:
+            s.query(UserSpendModel).filter(UserSpendModel.user_id == user_id).update(
+                {UserSpendModel.cumulative_spend_inr: 0.0},
+                synchronize_session=False
+            )
+            if not db:
+                s.commit()
+        except Exception:
+            if not db:
+                s.rollback()
+            raise
+        finally:
+            if not db:
+                s.close()
+
+
+class AuditRepository:
+    def record_audit(self, audit_record: AuditRecord, db: Optional[Session] = None) -> AuditRecord:
+        s = db or SessionLocal()
+        try:
+            am = AuditRecordModel(
+                event_id=audit_record.event_id,
+                timestamp=audit_record.timestamp,
+                actor_id=audit_record.actor_id,
+                actor_role=audit_record.actor_role,
+                action=audit_record.action,
+                arguments_json=json.dumps(audit_record.arguments or {}),
+                guardrail_decision=audit_record.guardrail_decision,
+                transaction_state=audit_record.transaction_state,
+                result_status=audit_record.result_status,
+                explainability_notes=audit_record.explainability_notes,
+                signature=audit_record.signature
+            )
+            s.add(am)
+            if not db:
+                s.commit()
+            return audit_record
+        except Exception:
+            if not db:
+                s.rollback()
+            raise
+        finally:
+            if not db:
+                s.close()
+
+    def get_audit_trail(self, limit: int = 100, db: Optional[Session] = None) -> List[AuditRecord]:
+        s = db or SessionLocal()
+        try:
+            models = s.query(AuditRecordModel).order_by(AuditRecordModel.id.desc()).limit(limit).all()
+            results = []
+            for am in models:
+                results.append(AuditRecord(
+                    event_id=am.event_id,
+                    timestamp=am.timestamp,
+                    actor_id=am.actor_id,
+                    actor_role=am.actor_role,
+                    action=am.action,
+                    arguments=am.arguments,
+                    guardrail_decision=am.guardrail_decision,
+                    transaction_state=am.transaction_state,
+                    result_status=am.result_status,
+                    explainability_notes=am.explainability_notes,
+                    signature=am.signature
+                ))
+            return results
+        finally:
+            if not db:
+                s.close()
+
+
+class IdempotencyRepository:
+    def check_key(self, key: str, db: Optional[Session] = None) -> Optional[Dict[str, Any]]:
+        s = db or SessionLocal()
+        try:
+            im = s.query(IdempotencyModel).filter(IdempotencyModel.key == key).first()
+            if im:
+                try:
+                    return json.loads(im.response_json)
+                except Exception:
+                    return {}
+            return None
+        finally:
+            if not db:
+                s.close()
+
+    def register_key(self, key: str, data: Dict[str, Any], db: Optional[Session] = None):
+        s = db or SessionLocal()
+        try:
+            im = IdempotencyModel(key=key, response_json=json.dumps(data))
+            s.merge(im)
+            if not db:
+                s.commit()
+        except Exception:
+            if not db:
+                s.rollback()
+            raise
+        finally:
+            if not db:
+                s.close()
+
 
 # Singleton repository instances
 product_repo = ProductRepository()
@@ -485,3 +736,5 @@ payment_repo = PaymentRepository()
 refund_repo = RefundRepository()
 approval_repo = ApprovalRepository()
 spend_repo = SpendRepository()
+audit_repo = AuditRepository()
+idempotency_repo = IdempotencyRepository()

@@ -1,22 +1,35 @@
 import json
-from typing import Dict, Any, Tuple
+import logging
+from typing import Dict, Any, Tuple, Optional
+from sqlalchemy.orm import Session
+from backend.app.database.db import SessionLocal
 from backend.app.payment.razorpay_client import razorpay_client
-from backend.app.payment.state_machine import state_machine
 from backend.app.models.order import TransactionState
 from backend.app.audit.audit_service import audit_service
-from backend.app.guardrails.spend_limiter import spend_limiter
-from backend.app.database.repositories import order_repo, cart_repo, product_repo
+from backend.app.database.repositories import order_repo, cart_repo, product_repo, spend_repo
+
+logger = logging.getLogger(__name__)
 
 
 class AuthoritativeWebhookHandler:
     """
-    Authoritative Webhook Receiver.
-    Validates HMAC-SHA256 signature, transitions order/payment states,
-    decrements inventory atomically, and records verified audit events.
+    Authoritative server-side processor for Razorpay payment webhooks.
+    Guarantees transactional integrity by executing balance updates,
+    inventory decrementing, and state transitions inside an explicit Unit-of-Work session.
     """
 
     @classmethod
-    def handle_webhook(cls, raw_payload: str, signature: str) -> Tuple[bool, str, Dict[str, Any]]:
+    def handle_webhook(
+        cls,
+        raw_payload: str,
+        signature: str,
+        db: Optional[Session] = None
+    ) -> Tuple[bool, str, Dict[str, Any]]:
+        """
+        Verifies the incoming Razorpay webhook signature and processes state transitions.
+        If a db session is passed, it uses it; otherwise it manages its own atomic SessionLocal transaction block.
+        """
+        # 1. Signature Verification
         is_valid = razorpay_client.verify_webhook_signature(raw_payload, signature)
         if not is_valid:
             audit_service.record_event(
@@ -30,25 +43,68 @@ class AuthoritativeWebhookHandler:
             )
             return False, "INVALID_WEBHOOK_SIGNATURE", {}
 
-        payload = json.loads(raw_payload)
+        try:
+            payload = json.loads(raw_payload)
+        except json.JSONDecodeError as err:
+            logger.error("Failed to parse webhook JSON payload: %s", err)
+            return False, "MALFORMED_JSON_PAYLOAD", {}
+
         event_type = payload.get("event", "unknown")
-        entity = payload.get("payload", {}).get("payment", {}).get("entity", {})
-        order_id = entity.get("order_id", "unknown_order")
-        payment_id = entity.get("id", "unknown_pay")
-        amount = float(entity.get("amount", 0)) / 100.0
+        payment_entity = payload.get("payload", {}).get("payment", {}).get("entity", {})
+        order_id = payment_entity.get("order_id", "unknown_order")
+        payment_id = payment_entity.get("id", "unknown_pay")
+        amount = float(payment_entity.get("amount", 0)) / 100.0
 
+        # 2. Process payment.captured event
         if event_type == "payment.captured":
-            buyer_id = razorpay_client.reconcile_verified_payment(order_id, payment_id, amount)
-            if buyer_id:
-                spend_limiter.record_spend(buyer_id, amount)
+            session = db or SessionLocal()
+            try:
+                # Reconcile payment status and state
+                buyer_id = razorpay_client.reconcile_verified_payment(
+                    order_id=order_id,
+                    payment_id=payment_id,
+                    amount_inr=amount,
+                    db=session
+                )
+                
+                # Record spend against user cumulative spend tracker
+                if buyer_id:
+                    spend_repo.record_spend(buyer_id, amount, db=session)
 
-            # Atomically decrement inventory for the order's cart items
-            order = order_repo.get_order(order_id)
-            if order and order.cart_id:
-                cart = cart_repo.get_cart(order.cart_id)
-                if cart:
-                    for item in cart.items:
-                        product_repo.decrement_inventory(item.product_id, item.quantity)
+                # Atomically decrement product inventory for cart items
+                order = order_repo.get_order(order_id, db=session)
+                if order and order.cart_id:
+                    cart = cart_repo.get_cart(order.cart_id, db=session)
+                    if cart:
+                        for item in cart.items:
+                            success = product_repo.decrement_inventory(
+                                product_id=item.product_id,
+                                quantity=item.quantity,
+                                db=session
+                            )
+                            if not success:
+                                raise ValueError(f"Insufficient stock to fulfill product {item.product_id}")
+
+                # Commit only if managing session locally
+                if not db:
+                    session.commit()
+
+            except Exception as exc:
+                if not db:
+                    session.rollback()
+                logger.error("Webhook processing transaction failed for order %s: %s", order_id, exc)
+                audit_service.record_event(
+                    actor_id="RAZORPAY_SERVER",
+                    actor_role="PAYMENT_GATEWAY",
+                    action="PAYMENT_CAPTURE_TRANSACTION_FAILED",
+                    arguments={"order_id": order_id, "payment_id": payment_id, "error": str(exc)},
+                    result_status="FAILED",
+                    explainability_notes=f"Atomic webhook transaction failed and was rolled back: {exc}"
+                )
+                return False, "TRANSACTION_PROCESSING_ERROR", {"error": str(exc)}
+            finally:
+                if not db:
+                    session.close()
 
             audit_service.record_event(
                 actor_id="RAZORPAY_SERVER",
@@ -61,8 +117,26 @@ class AuthoritativeWebhookHandler:
             )
             return True, "PAYMENT_CAPTURED_VERIFIED", {"order_id": order_id, "payment_id": payment_id, "amount": amount}
 
+        # 3. Process payment.failed event
         elif event_type == "payment.failed":
-            order_repo.update_order_state(order_id, "failed", TransactionState.PAYMENT_FAILED)
+            session = db or SessionLocal()
+            try:
+                order_repo.update_order_state(
+                    order_id=order_id,
+                    status="failed",
+                    state=TransactionState.PAYMENT_FAILED,
+                    db=session
+                )
+                if not db:
+                    session.commit()
+            except Exception as exc:
+                if not db:
+                    session.rollback()
+                raise exc
+            finally:
+                if not db:
+                    session.close()
+
             audit_service.record_event(
                 actor_id="RAZORPAY_SERVER",
                 actor_role="PAYMENT_GATEWAY",
@@ -74,7 +148,8 @@ class AuthoritativeWebhookHandler:
             )
             return True, "PAYMENT_FAILED_VERIFIED", {"order_id": order_id, "payment_id": payment_id, "amount": amount}
 
-        return True, f"EVENT_ACKNOWLEDGED_{event_type}", {}
+        return True, f"EVENT_ACKNOWLEDGED_{event_type.upper()}", {}
 
 
+# Singleton instance
 webhook_handler = AuthoritativeWebhookHandler()

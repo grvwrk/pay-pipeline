@@ -6,9 +6,10 @@ import uuid
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 from typing import Dict, Any, Optional
+from sqlalchemy.orm import Session
 from backend.app.config import settings
 from backend.app.models.order import RazorpayOrder, PaymentCaptureResult, RefundResult, TransactionState
-from backend.app.database.repositories import order_repo, payment_repo, refund_repo
+from backend.app.database.repositories import order_repo, payment_repo, refund_repo, spend_repo
 
 
 class RazorpayApiError(RuntimeError):
@@ -31,12 +32,13 @@ class RazorpayClientWrapper:
         amount_inr: float,
         cart_id: str,
         idempotency_key: Optional[str] = None,
-        notes: Optional[Dict[str, str]] = None
+        notes: Optional[Dict[str, str]] = None,
+        db: Optional[Session] = None
     ) -> RazorpayOrder:
         if amount_inr <= 0:
             raise ValueError("Order amount must be positive")
         if settings.PAYMENT_PROVIDER_MODE == "razorpay":
-            return self._create_razorpay_test_order(amount_inr, cart_id, idempotency_key, notes)
+            return self._create_razorpay_test_order(amount_inr, cart_id, idempotency_key, notes, db=db)
         if settings.PAYMENT_PROVIDER_MODE != "simulator":
             raise RazorpayApiError("PAYMENT_PROVIDER_MODE must be 'simulator' or 'razorpay'")
 
@@ -56,7 +58,7 @@ class RazorpayClientWrapper:
             state=TransactionState.ORDER_CREATED,
             idempotency_key=idempotency_key
         )
-        order_repo.create_order(order)
+        order_repo.create_order(order, db=db)
         return order
 
     def _create_razorpay_test_order(
@@ -64,7 +66,8 @@ class RazorpayClientWrapper:
         amount_inr: float,
         cart_id: str,
         idempotency_key: Optional[str],
-        notes: Optional[Dict[str, str]]
+        notes: Optional[Dict[str, str]],
+        db: Optional[Session] = None
     ) -> RazorpayOrder:
         if not self.key_id or not settings.RAZORPAY_KEY_SECRET:
             raise RazorpayApiError("RAZORPAY_KEY_ID and RAZORPAY_KEY_SECRET are required for Razorpay mode")
@@ -102,7 +105,7 @@ class RazorpayClientWrapper:
             state=TransactionState.ORDER_CREATED,
             idempotency_key=idempotency_key
         )
-        order_repo.create_order(order)
+        order_repo.create_order(order, db=db)
         return order
 
     def simulate_payment_capture(
@@ -110,12 +113,13 @@ class RazorpayClientWrapper:
         order_id: str,
         amount_inr: float,
         method: str = "upi",
-        force_fail: bool = False
+        force_fail: bool = False,
+        db: Optional[Session] = None
     ) -> PaymentCaptureResult:
         if settings.PAYMENT_PROVIDER_MODE != "simulator":
             raise RazorpayApiError("Payment capture simulation is unavailable in Razorpay mode; complete Razorpay Checkout and wait for its webhook.")
 
-        order = order_repo.get_order(order_id)
+        order = order_repo.get_order(order_id, db=db)
         if not order:
             raise ValueError(f"Unknown order {order_id}")
         if amount_inr != order.amount:
@@ -135,7 +139,7 @@ class RazorpayClientWrapper:
                 error_code="PAYMENT_DECLINED_BY_BANK",
                 error_description="Customer bank declined transaction simulation."
             )
-            order_repo.update_order_state(order_id, "failed", TransactionState.PAYMENT_FAILED)
+            order_repo.update_order_state(order_id, "failed", TransactionState.PAYMENT_FAILED, db=db)
         else:
             res = PaymentCaptureResult(
                 payment_id=payment_id,
@@ -145,9 +149,9 @@ class RazorpayClientWrapper:
                 status="captured",
                 method=method
             )
-            order_repo.update_order_state(order_id, "paid", TransactionState.PAYMENT_PENDING)
+            order_repo.update_order_state(order_id, "paid", TransactionState.PAYMENT_PENDING, db=db)
 
-        payment_repo.record_payment(res, user_id=user_id)
+        payment_repo.record_payment(res, user_id=user_id, db=db)
         return res
 
     def process_refund(
@@ -155,9 +159,10 @@ class RazorpayClientWrapper:
         payment_id: str,
         amount_inr: float,
         reason: str = "Customer request",
-        user_id: str = "user_default_buyer"
+        user_id: str = "user_default_buyer",
+        db: Optional[Session] = None
     ) -> RefundResult:
-        payment = payment_repo.get_payment(payment_id)
+        payment = payment_repo.get_payment(payment_id, db=db)
         if not payment:
             raise ValueError(f"Payment {payment_id} not found")
 
@@ -171,23 +176,25 @@ class RazorpayClientWrapper:
             status="processed",
             reason=reason
         )
-        refund_repo.create_refund(refund, user_id=user_id)
+        refund_repo.create_refund(refund, user_id=user_id, db=db)
 
-        # Update order state if fully/partially refunded
-        order = order_repo.get_order(payment.order_id)
+        # Deduct refunded amount from cumulative user spend total
+        spend_repo.decrement_spend(user_id, amount_inr, db=db)
+
+        order = order_repo.get_order(payment.order_id, db=db)
         if order:
-            order_repo.update_order_state(order.order_id, "refunded", TransactionState.REFUNDED)
+            order_repo.update_order_state(order.order_id, "refunded", TransactionState.REFUNDED, db=db)
 
         return refund
 
-    def fetch_order(self, order_id: str) -> Optional[RazorpayOrder]:
-        return order_repo.get_order(order_id)
+    def fetch_order(self, order_id: str, db: Optional[Session] = None) -> Optional[RazorpayOrder]:
+        return order_repo.get_order(order_id, db=db)
 
-    def fetch_payment(self, payment_id: str) -> Optional[PaymentCaptureResult]:
-        return payment_repo.get_payment(payment_id)
+    def fetch_payment(self, payment_id: str, db: Optional[Session] = None) -> Optional[PaymentCaptureResult]:
+        return payment_repo.get_payment(payment_id, db=db)
 
-    def fetch_refund(self, refund_id: str) -> Optional[RefundResult]:
-        return refund_repo.get_refund(refund_id)
+    def fetch_refund(self, refund_id: str, db: Optional[Session] = None) -> Optional[RefundResult]:
+        return refund_repo.get_refund(refund_id, db=db)
 
     def verify_webhook_signature(self, raw_payload: str, signature: str) -> bool:
         expected_signature = hmac.new(
@@ -197,13 +204,19 @@ class RazorpayClientWrapper:
         ).hexdigest()
         return hmac.compare_digest(expected_signature, signature)
 
-    def reconcile_verified_payment(self, order_id: str, payment_id: str, amount_inr: float) -> Optional[str]:
-        order = order_repo.get_order(order_id)
+    def reconcile_verified_payment(
+        self, 
+        order_id: str, 
+        payment_id: str, 
+        amount_inr: float, 
+        db: Optional[Session] = None
+    ) -> Optional[str]:
+        order = order_repo.get_order(order_id, db=db)
         if not order:
             return None
 
-        order_repo.update_order_state(order_id, "paid", TransactionState.COMPLETED)
-        payment_repo.update_status(payment_id, "captured")
+        order_repo.update_order_state(order_id, "paid", TransactionState.COMPLETED, db=db)
+        payment_repo.update_status(payment_id, "captured", db=db)
         return order.notes.get("user_id") if order.notes else None
 
 
