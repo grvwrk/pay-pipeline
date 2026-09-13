@@ -4,7 +4,14 @@ from backend.app.tools.money_tools import money_tools
 from backend.app.models.cart import Cart, CartItem
 
 
-def test_valid_and_excessive_refund():
+def test_valid_and_excessive_refund(monkeypatch):
+    # Refund bounds are provider-independent, but capturing a payment locally is
+    # only possible on the simulator. Pin the rail so this exercises the guardrail
+    # rather than whichever provider the developer has configured.
+    from backend.app.config import settings
+
+    monkeypatch.setattr(settings, "PAYMENT_PROVIDER_MODE", "simulator")
+
     # 1. Setup order and payment of ₹1,899
     cart = Cart(user_id="user_refund_test")
     cart.items.append(CartItem(

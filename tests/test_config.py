@@ -21,8 +21,24 @@ def test_default_config_loaded():
     assert len(settings.AUDIT_HMAC_SECRET) > 0
 
 
-def test_custom_yaml_loading():
+def test_custom_yaml_loading(monkeypatch):
     """Verify loading settings from a custom YAML file."""
+    # Secrets now arrive via .env, and the environment outranks YAML by design.
+    # Blank the keys under test so this exercises the YAML layer in isolation,
+    # rather than whatever the developer happens to have configured locally.
+    # They are set empty rather than deleted: an absent key would simply be
+    # refilled from .env, whereas an empty one is present (so .env leaves it
+    # alone) and falsy (so resolution falls through to YAML).
+    for key in (
+        "PROJECT_NAME", "PORT", "HOST", "PAYMENT_PROVIDER_MODE",
+        "RAZORPAY_KEY_ID", "RAZORPAY_KEY_SECRET", "RAZORPAY_WEBHOOK_SECRET",
+        "AUDIT_HMAC_SECRET", "DEFAULT_MAX_TXN_AMOUNT_INR",
+        "DEFAULT_MAX_CUMULATIVE_SPEND_INR", "DEFAULT_APPROVAL_THRESHOLD_INR",
+        "DEFAULT_MAX_ITEM_QUANTITY", "ALLOWED_CURRENCY",
+        "MERCHANT_ID", "MERCHANT_NAME",
+    ):
+        monkeypatch.setenv(key, "")
+
     custom_yaml = """
 server:
   project_name: "Custom Test Store"

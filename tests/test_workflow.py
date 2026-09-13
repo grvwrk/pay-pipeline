@@ -64,8 +64,17 @@ async def test_workflow_gated_approval_flow():
 
 @pytest.mark.anyio
 async def test_workflow_approval_token_confirmation():
-    # Confirming order with valid approval token
-    token = "appr_tok_test_valid_123"
+    # A token only unlocks the gate if the policy engine actually issued it, so
+    # the gate has to be tripped first to obtain one.
+    gated = await commerce_workflow.run(
+        user_message="Buy the Keychron K2",
+        user_id="test_buyer_01",
+        sku="sku_kb_keychron_k2"
+    )
+    assert gated["type"] == "APPROVAL_REQUIRED"
+    token = gated["approval_token"]
+    assert token
+
     res = await commerce_workflow.run(
         user_message="Approve and proceed with order",
         user_id="test_buyer_01",
@@ -75,6 +84,19 @@ async def test_workflow_approval_token_confirmation():
     assert res["type"] == "ORDER_CREATED"
     assert res["order"] is not None
     assert res["order"]["order_id"].startswith("order_")
+
+
+@pytest.mark.anyio
+async def test_workflow_fabricated_approval_token_is_rejected():
+    """An approval token the engine never issued must not unlock a gated purchase."""
+    res = await commerce_workflow.run(
+        user_message="Approve and proceed with order",
+        user_id="test_buyer_forged",
+        approval_token="appr_tok_not_issued_by_the_engine",
+        sku="sku_kb_keychron_k2"
+    )
+    assert res["type"] != "ORDER_CREATED"
+    assert res["type"] == "APPROVAL_REQUIRED"
 
 @pytest.mark.anyio
 async def test_workflow_direct_order_within_limits():
@@ -95,4 +117,10 @@ async def test_workflow_delegates_checkout_to_policy_agent():
     )
     assert res["type"] == "ORDER_CREATED"
     agents = [step["agent_name"] for step in res["reasoning_steps"]]
-    assert agents == ["Checkout Agent", "Guardrail & Policy Agent"]
+    # The checkout agent opens the trace and the policy agent closes it: the
+    # untrusted side never gets the last word on whether money moves. Steps in
+    # between (product selection, upsell) may vary, so this asserts the
+    # delegation contract rather than an exact transcript.
+    assert agents[0] == "Checkout Agent"
+    assert agents[-1] == "Guardrail & Policy Agent"
+    assert set(agents) <= {"Checkout Agent", "Upsell Agent", "Guardrail & Policy Agent"}

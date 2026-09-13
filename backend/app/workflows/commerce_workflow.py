@@ -29,6 +29,33 @@ def _trace(agent: str, thought: str, action: str, latency_ms: float = 0.0, **ext
     }
 
 
+def _describe_selection(ev: "CheckoutCartEvent") -> str:
+    """Lead a purchase with what was chosen and why, not just an order id."""
+    product = ev.selected_product
+    if not product:
+        return ""
+
+    line = f"Selected **{product.name}** at ₹{product.price:,.2f} ({product.rating}★)"
+    if ev.alternatives and ev.resolved_by_sku:
+        # A SKU the buyer named was resolved directly, never ranked against these.
+        line += f", with {len(ev.alternatives)} other in-stock option(s) in {product.category}"
+    elif ev.alternatives:
+        line += f", the best match among {len(ev.alternatives) + 1} in-stock options"
+    return line + ".\n\n"
+
+
+def _describe_bundle(ev: "CheckoutCartEvent") -> str:
+    """Offer the companion product without having silently added it to the cart."""
+    bundle = ev.upsell_bundle
+    if not bundle:
+        return ""
+    return (
+        f"\n\nFrequently bought together: **{bundle.complementary_product_name}** — "
+        f"take both for ₹{bundle.discounted_bundle_price:,.2f} and save "
+        f"₹{bundle.savings_amount:,.2f}."
+    )
+
+
 class AgenticCommerceWorkflow(Workflow):
     """
     Event-driven LlamaIndex multi-agent commerce workflow.
@@ -49,7 +76,15 @@ class AgenticCommerceWorkflow(Workflow):
         classified = await asyncio.to_thread(groq_catalog_agent.route_intent, query, user_id)
         latency = (time.perf_counter() - start_t) * 1000.0
 
-        intent = "APPROVE" if approval else classified.intent
+        if approval:
+            intent = "APPROVE"
+        elif sku:
+            # A "Buy" click names the SKU explicitly. Re-classifying that prose can land
+            # it back in PRODUCT_SEARCH, which returns a catalog list and no order at all
+            # -- so the buyer never gets an order, a payment link, or a Pay button.
+            intent = "CHECKOUT"
+        else:
+            intent = classified.intent
 
         if not order_id:
             ord_m = re.search(r'(order_[a-zA-Z0-9]+)', query)
@@ -88,7 +123,9 @@ class AgenticCommerceWorkflow(Workflow):
             target_sku=sku or classified.sku,
             target_category=classified.category,
             max_price=classified.max_price,
-            include_bundle=classified.include_bundle,
+            # An explicit "add the bundle" click is authoritative; the classifier only
+            # ever guesses it from prose, so OR the two rather than letting it override.
+            include_bundle=bool(ev.get("include_bundle")) or classified.include_bundle,
             approval_token=approval,
             idempotency_key=ev.get("idempotency_key") or f"idem_{uuid.uuid4().hex[:12]}",
             force_fail_payment=ev.get("force_fail_payment", False),
@@ -248,16 +285,59 @@ class AgenticCommerceWorkflow(Workflow):
     @step
     async def checkout_agent(self, ctx: Context, ev: CheckoutEvent) -> Union[CheckoutCartEvent, StopEvent]:
         product = await asyncio.to_thread(read_tools.get_product, ev.target_sku) if ev.target_sku else None
+
+        # Always look at the catalog, even when a SKU was named: a purchase should
+        # be able to say what else was in stock, not just charge for one row. When the
+        # SKU is already known, "what else" means comparable items in the same category
+        # -- searching the literal id back against the catalog only ever returns itself.
+        lookup = (
+            ProductFilter(category=product.category, max_price=ev.max_price)
+            if product
+            else ProductFilter(query=ev.query, max_price=ev.max_price)
+        )
+        candidates = await asyncio.to_thread(read_tools.catalog_lookup, lookup)
         if not product:
-            candidates = await asyncio.to_thread(read_tools.catalog_lookup, ProductFilter(query=ev.query, max_price=ev.max_price))
             product = candidates[0] if candidates else None
 
         if not product:
             return StopEvent(result={
                 "type": "CHECKOUT_UNAVAILABLE",
                 "message": "No matching in-stock product could be resolved for checkout.",
+                "products": [],
                 "reasoning_steps": [_trace("Checkout Agent", "No catalog item resolved for checkout.", "STOP")]
             })
+
+        # A category sweep comes back in storage order; rank it so the few alternatives
+        # actually shown to the buyer are the best ones, not the first rows.
+        alternatives = sorted(
+            (p for p in candidates if p.id != product.id),
+            key=lambda p: (p.rating, -p.price),
+            reverse=True
+        )
+        bundle = await asyncio.to_thread(read_tools.calculate_upsell_bundle, product.id)
+
+        trace = [_trace(
+            "Checkout Agent",
+            f"Resolved {product.name} at ₹{product.price:,.2f} ({product.rating}★) directly by SKU; "
+            f"{len(alternatives)} other in-stock item(s) in {product.category}."
+            if ev.target_sku else
+            f"Selected {product.name} at ₹{product.price:,.2f} ({product.rating}★) "
+            f"from {len(candidates)} in-stock match(es) for '{ev.query}'.",
+            "SELECT_PRODUCT",
+            tool_called="catalog_lookup",
+            result_summary=(
+                f"{len(alternatives)} alternative(s) also available." if alternatives else "No alternatives in stock."
+            )
+        )]
+
+        if bundle:
+            trace.append(_trace(
+                "Upsell Agent",
+                f"Identified high-affinity companion accessory for {product.name}.",
+                "RECOMMEND_BUNDLE",
+                tool_called="calculate_upsell_bundle",
+                result_summary=f"Bundle discount saves ₹{bundle.savings_amount:,.2f}."
+            ))
 
         cart = await asyncio.to_thread(
             read_tools.build_cart,
@@ -265,13 +345,24 @@ class AgenticCommerceWorkflow(Workflow):
             items=[{"product_id": product.id, "quantity": 1, "include_bundle": ev.include_bundle}]
         )
 
+        trace.append(_trace(
+            "Checkout Agent",
+            f"Constructed server-side cart for {len(cart.items)} item(s), total ₹{cart.total_amount:,.2f}.",
+            "BUILD_CART",
+            tool_called="build_cart"
+        ))
+
         return CheckoutCartEvent(
             cart=cart,
             user_id=ev.user_id,
             approval_token=ev.approval_token,
             idempotency_key=ev.idempotency_key,
             force_fail_payment=ev.force_fail_payment,
-            reasoning_steps=[_trace("Checkout Agent", f"Constructed server-side cart for {len(cart.items)} item(s), total ₹{cart.total_amount:,.2f}.", "BUILD_CART", tool_called="build_cart")]
+            selected_product=product,
+            resolved_by_sku=bool(ev.target_sku),
+            alternatives=alternatives,
+            upsell_bundle=bundle,
+            reasoning_steps=trace
         )
 
     @step
@@ -286,16 +377,31 @@ class AgenticCommerceWorkflow(Workflow):
         )
         latency = (time.perf_counter() - start_t) * 1000.0
 
+        # Every outcome carries the same selection context, so a buyer can always
+        # see what was picked, what else was in stock, and what pairs with it.
+        selection = {
+            "top_choice": ev.selected_product.model_dump() if ev.selected_product else None,
+            "products": [p.model_dump() for p in ev.alternatives],
+            "upsell_bundle": ev.upsell_bundle.model_dump() if ev.upsell_bundle else None,
+        }
+
         trace = ev.reasoning_steps
         if result.get("success"):
             trace.append(_trace("Guardrail & Policy Agent", "Deterministic policy approved order creation.", "APPROVE", latency_ms=latency, tool_called="create_order"))
             return StopEvent(result={
                 "type": "ORDER_CREATED",
-                "message": f"Order {result['order']['order_id']} created for ₹{ev.cart.total_amount:,.2f}. Awaiting payment initiation.",
+                "message": (
+                    f"{_describe_selection(ev)}"
+                    f"Order {result['order']['order_id']} created for ₹{ev.cart.total_amount:,.2f}. "
+                    f"Awaiting payment initiation."
+                    f"{_describe_bundle(ev)}"
+                ),
                 "order": result["order"],
                 "payment_link": result.get("payment_link"),
+                "payment_link_error": result.get("payment_link_error"),
                 "cart": ev.cart.model_dump(),
                 "policy_evaluation": result["policy_evaluation"],
+                **selection,
                 "reasoning_steps": trace
             })
 
@@ -303,10 +409,11 @@ class AgenticCommerceWorkflow(Workflow):
             trace.append(_trace("Guardrail & Policy Agent", result["reason"], "GATED_APPROVAL_REQUIRED", latency_ms=latency))
             return StopEvent(result={
                 "type": "APPROVAL_REQUIRED",
-                "message": result["reason"],
+                "message": f"{_describe_selection(ev)}{result['reason']}",
                 "approval_token": result.get("approval_token"),
                 "cart": ev.cart.model_dump(),
                 "policy_evaluation": result["policy_evaluation"],
+                **selection,
                 "reasoning_steps": trace
             })
 
@@ -314,12 +421,21 @@ class AgenticCommerceWorkflow(Workflow):
         code_val = decision_code.value if hasattr(decision_code, "value") else str(decision_code)
 
         trace.append(_trace("Guardrail & Policy Agent", result.get("reason", "Policy violation"), "DENY", latency_ms=latency))
+
+        # A denial is more useful with a way forward, when one is in stock.
+        cheaper = [p for p in ev.alternatives if p.price < ev.cart.total_amount][:3]
+        suggestion = ""
+        if cheaper:
+            options = ", ".join(f"**{p.name}** (₹{p.price:,.2f})" for p in cheaper)
+            suggestion = f"\n\nCheaper in-stock alternatives: {options}."
+
         return StopEvent(result={
             "type": "GUARDRAIL_DENIED",
-            "message": f"Transaction blocked by policy: {result.get('reason', 'Policy check failed')}",
+            "message": f"Transaction blocked by policy: {result.get('reason', 'Policy check failed')}{suggestion}",
             "decision_code": code_val,
             "cart": ev.cart.model_dump(),
             "policy_evaluation": result.get("policy_evaluation"),
+            **selection,
             "reasoning_steps": trace
         })
 

@@ -58,6 +58,15 @@ class CheckoutCartEvent(Event):
     idempotency_key: Optional[str] = None
     reasoning_steps: List[Dict[str, Any]] = Field(default_factory=list)
     force_fail_payment: bool = False
+    # Why this product: what was chosen, what else was in stock, and what pairs
+    # with it. Carried through so a purchase can explain itself rather than
+    # silently charging for whatever ranked first.
+    selected_product: Optional[Product] = None
+    alternatives: List[Product] = Field(default_factory=list)
+    upsell_bundle: Optional[BundleOffer] = None
+    # A SKU the buyer named was resolved directly; it was never ranked against the
+    # alternatives, so the purchase must not describe it as the "best match".
+    resolved_by_sku: bool = False
 
 
 class ApprovalConfirmationEvent(Event):

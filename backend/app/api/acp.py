@@ -173,9 +173,15 @@ def execute_acp_checkout(req: ACPCheckoutRequest):
 
     payment_link = order_res.get("payment_link") or (order.get("payment_link") if isinstance(order, dict) else getattr(order, "payment_link", None))
     if not payment_link:
+        # Carry the gateway's own reason: "failed to issue a link" alone cannot tell an
+        # exhausted test-mode quota apart from a bad key or an outage.
+        reason = order_res.get("payment_link_error")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Payment gateway failed to issue a payment link for Order ID '{order_id}'."
+            detail=(
+                f"Payment gateway failed to issue a payment link for Order ID '{order_id}'."
+                + (f" {reason}" if reason else "")
+            )
         )
 
     return ACPCheckoutResponse(

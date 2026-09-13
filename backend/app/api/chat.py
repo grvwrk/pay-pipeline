@@ -17,6 +17,10 @@ class ChatRequest(BaseModel):
     idempotency_key: Optional[str] = None
     sku: Optional[str] = None
     force_fail_payment: bool = False
+    # Set when the buyer accepted a "frequently bought together" offer. Without it the
+    # bundle could only ever be applied when the LLM happened to infer it from prose,
+    # so the advertised bundle price was unreachable from the UI.
+    include_bundle: bool = False
 
     def get_user_query(self) -> str:
         return (self.user_message or self.message or "").strip()
@@ -40,7 +44,8 @@ async def process_chat(req: ChatRequest) -> Dict[str, Any]:
             approval_token=req.approval_token,
             idempotency_key=req.idempotency_key,
             sku=req.sku,
-            force_fail_payment=req.force_fail_payment
+            force_fail_payment=req.force_fail_payment,
+            include_bundle=req.include_bundle
         )
         return result
 

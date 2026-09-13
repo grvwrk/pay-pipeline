@@ -50,6 +50,14 @@ an order is never marked paid on creation. it's recorded as `ORDER_CREATED` and 
 
 an invalid signature gets logged and dropped, not processed. a valid one is routed by event type — a capture event asserts the amount matches before updating state; a refund event loads the refund metadata before updating state. either path writes to the audit chain afterward.
 
+#### mapping a webhook back to an order
+a razorpay **payment link** mints its own order when it is paid, so the `payment.captured` event arrives carrying *that* order id, not the one this system created. the local order is therefore resolved in priority order: the link's `reference_id`, then the `pay_pipeline_order_id` note echoed on the link/payment/order entity, then the raw `order_id`, then a stored `payment_link_id`, then the link's own order id recorded on a previous reconciliation. `payment_link.paid` is treated as a capture, and `payment_link.cancelled` / `payment_link.expired` as failures. a failed attempt does not close the order — a retry on the same link can still capture.
+
+#### reconciliation
+razorpay cannot deliver a webhook to a host it cannot reach, which is the normal case on `localhost`. `POST /api/v1/payments/reconcile/{order_id}` (and `POST /api/v1/payments/reconcile-pending`) ask razorpay over the authenticated rest api what actually happened and apply the same transitions the webhook path would. the gateway is still the only thing that decides a payment happened; only the delivery direction changes. reconciled captures are recorded with `webhook_verified = false`, so a pulled verdict is never mistaken for a signed one.
+
+to get real webhooks locally, expose the backend (`ngrok http 8000`, `cloudflared tunnel --url http://localhost:8000`) and register `https://<public-host>/api/v1/webhooks/razorpay` in the razorpay dashboard, using the same secret as `razorpay_webhook_secret` and subscribing to `payment.captured`, `payment.failed` and `payment_link.paid`.
+
 ### audit chain
 every security-relevant event is hash chained. each record's hash is computed from its own canonical payload plus the previous record's hash, so record `N` can't be altered without breaking every record after it. the resulting hash is then signed with a separate hmac secret, so even a direct database edit that recomputes the chain correctly still can't reproduce a valid signature. validating the trail means walking the chain from the genesis record forward, recomputing each hash, and checking each signature against the secret.
 
@@ -66,13 +74,32 @@ every security-relevant event is hash chained. each record's hash is computed fr
 
 ## configuration
 
-configure parameters in [config.yaml](file:///c:/razorpay/pay-pipeline/config.yaml) or override using environment variables.
+settings resolve in layers, each overriding the one before it:
 
-### local variables
+1. built-in defaults
+2. [config.yaml](config.yaml) — committed, and holds no secrets
+3. `.env` — git-ignored, loaded into the process environment; **all credentials live here**
+4. real environment variables — so ci and container secrets always win
+
+non-secret behaviour (provider mode, guardrail ceilings, promo codes, merchant metadata) stays in `config.yaml` where it can be reviewed in a diff. anything in `config.yaml` can still be overridden by its environment variable name if needed.
+
+### secrets
+
+copy [.env.example](.env.example) to `.env` and fill it in:
+
+```powershell
+copy .env.example .env
+```
+
+- **`RAZORPAY_KEY_ID`** / **`RAZORPAY_KEY_SECRET`**: razorpay api credentials (required when `provider_mode` is `razorpay`; unused in `simulator`).
+- **`RAZORPAY_WEBHOOK_SECRET`**: must match the secret set on the webhook in the razorpay dashboard, or every event fails signature verification and is dropped.
+- **`AUDIT_HMAC_SECRET`**: signs every audit record. keep it stable for the life of a database — changing it invalidates the signatures on all existing records. if unset, a random one is generated per process.
+- **`GROQ_API_KEY`**: required when `llm.provider` is `groq`; unused for `deterministic`.
+- **`TAVILY_API_KEY`**: optional market-intelligence search.
+
+### other variables
 - **`PAYMENT_PROVIDER_MODE`**: `simulator` (offline testing) or `razorpay` (live test rails).
-- **`RAZORPAY_KEY_ID`**: razorpay key id (required if mode is `razorpay`).
-- **`RAZORPAY_KEY_SECRET`**: razorpay secret key (required if mode is `razorpay`).
-- **`RAZORPAY_WEBHOOK_SECRET`**: signature secret for webhook verification (default: `pay_pipeline_webhook_secret_default_2026`).
+- **`CONFIG_PATH`**: load a config file from somewhere other than the project root.
 
 ---
 
@@ -86,15 +113,33 @@ python -m venv .venv
 pip install -r requirements.txt
 ```
 
-### 2. database initialization
+### 2. credentials
+```powershell
+copy .env.example .env
+```
+fill in the values listed under [secrets](#secrets). `.env` is git-ignored; `config.yaml` is committed and holds none.
+
+### 3. database initialization
 the sqlite database (`pay_pipeline.db`) and schema are created and seeded with default product catalog items automatically on application startup.
 
-### 3. start uvicorn
+### 4. start uvicorn
 run the backend server:
 ```powershell
 python -m backend.app.main
 ```
 the api will bind to `http://localhost:8000`. interactive swagger documentation is served at `http://localhost:8000/docs`.
+
+### 5. start the frontend (optional)
+
+a separate single-page app lives in [frontend/](frontend/) — agent console, catalog, checkout, guardrail editor, audit chain viewer and merchant dashboard. in a second terminal:
+
+```powershell
+cd frontend
+npm install
+npm run dev
+```
+
+it serves on `http://localhost:5173` and proxies `/api` to the backend. see [frontend/README.md](frontend/README.md).
 
 ---
 

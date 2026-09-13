@@ -6,6 +6,47 @@ import yaml
 from pydantic import BaseModel, Field
 
 
+PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
+
+
+def _parse_env_file(path: Path) -> Dict[str, str]:
+    """Minimal KEY=VALUE reader, used only when python-dotenv is unavailable."""
+    values: Dict[str, str] = {}
+    for line in path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, raw = line.partition("=")
+        key = key.strip()
+        if key.startswith("export "):
+            key = key[len("export "):].strip()
+        value = raw.strip()
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in ("'", '"'):
+            value = value[1:-1]
+        values[key] = value
+    return values
+
+
+def _load_dotenv() -> None:
+    """
+    Load secrets from a .env file into the process environment.
+
+    Keeps API keys and signing secrets out of config.yaml, which is committed.
+    Real environment variables always win, so CI and container secrets are never
+    overwritten by a stray local file.
+    """
+    for candidate in (PROJECT_ROOT / ".env", Path.cwd() / ".env"):
+        if not candidate.is_file():
+            continue
+        try:
+            from dotenv import load_dotenv
+            load_dotenv(candidate, override=False)
+        except ImportError:
+            for key, value in _parse_env_file(candidate).items():
+                os.environ.setdefault(key, value)
+        return
+
+
 def _find_config_file(custom_path: Optional[str] = None) -> Optional[Path]:
     """Find the path to config.yaml looking in custom path, env vars, and standard locations."""
     if custom_path and Path(custom_path).is_file():
@@ -130,9 +171,12 @@ def load_settings(config_path: Optional[str] = None) -> Settings:
     """
     Construct and return a Settings instance by layering:
     1. Base defaults
-    2. config.yaml configuration
-    3. Environment variable overrides
+    2. config.yaml configuration (committed; no secrets)
+    3. .env file, loaded into the environment (git-ignored; secrets live here)
+    4. Real environment variable overrides
     """
+    _load_dotenv()
+
     cfg_file = _find_config_file(config_path)
     yaml_data = _load_yaml_dict(cfg_file)
 

@@ -4,7 +4,12 @@ from backend.app.llm.groq_agent import groq_catalog_agent
 from backend.app.payment.razorpay_client import RazorpayApiError, RazorpayClientWrapper
 
 
-def test_catalog_agent_is_offline_without_groq_configuration():
+def test_catalog_agent_is_offline_without_groq_configuration(monkeypatch):
+    # Clear the key explicitly: otherwise this only asserts anything on machines
+    # that happen to have no Groq credentials configured.
+    from backend.app.config import settings
+
+    monkeypatch.setattr(settings, "GROQ_API_KEY", None)
     with pytest.raises(RuntimeError, match="Groq"):
         groq_catalog_agent.run("mechanical keyboard", "mechanical_keyboards", 5000)
 

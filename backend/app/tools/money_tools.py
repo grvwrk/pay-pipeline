@@ -78,12 +78,15 @@ class PrivilegedMoneyTools:
             explainability_notes=f"Order {order.order_id} created on Razorpay test rails for ₹{order.amount:,.2f}."
         )
 
-        payment_link = razorpay_client.create_payment_link(order)
+        payment_link, payment_link_error = razorpay_client.create_payment_link_result(order)
 
         return {
             "success": True,
             "order": order.model_dump(),
             "payment_link": payment_link,
+            # Carried so a missing "Pay" button can explain itself instead of the
+            # caller having to guess between bad credentials, a quota and an outage.
+            "payment_link_error": payment_link_error,
             "policy_evaluation": policy_res.model_dump()
         }
 

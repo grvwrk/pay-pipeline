@@ -11,20 +11,25 @@ database:
 # provider_mode: "simulator" (safe offline test simulator) or "razorpay" (live/test REST API)
 payment:
   provider_mode: "razorpay"
+  # Secrets live in .env (see .env.example): RAZORPAY_KEY_ID, RAZORPAY_KEY_SECRET,
+  # RAZORPAY_WEBHOOK_SECRET. Leave these null so nothing sensitive is committed.
   razorpay_key_id: null
   razorpay_key_secret: null
-  razorpay_webhook_secret: "pay_pipeline_webhook_secret_default_2026"
+  razorpay_webhook_secret: null
   customer_name: "pay-pipeline Buyer"
   customer_contact: "9876543210"
   customer_email: "buyer@pay-pipeline.com"
 
 audit:
-  # HMAC Secret used for signing audit trail entries and hash-chain validation
-  hmac_secret: "pay_pipeline_audit_hmac_secret_default_2026"
+  # HMAC secret used for signing audit trail entries and hash-chain validation.
+  # Set AUDIT_HMAC_SECRET in .env; a random one is generated per process if unset,
+  # which invalidates the signatures on any previously written records.
+  hmac_secret: null
 
 # provider: "deterministic" (offline rule-based intent/catalog routing) or "groq" (LLM-powered)
 llm:
-  provider: "deterministic"
+  provider: "groq"
+  # Set GROQ_API_KEY in .env
   groq_api_key: null
   groq_model: "openai/gpt-oss-20b"
   groq_max_tool_rounds: 4
@@ -33,6 +38,7 @@ llm:
 
 search:
   provider: "tavily"
+  # Set TAVILY_API_KEY in .env
   tavily_api_key: null
   max_search_results: 5
 
