@@ -9,7 +9,9 @@ from urllib.request import Request, urlopen
 from typing import Dict, Any, Optional
 from sqlalchemy.orm import Session
 from backend.app.config import settings
-from backend.app.models.order import RazorpayOrder, PaymentCaptureResult, RefundResult, TransactionState
+from backend.app.models.order import (
+    LOCAL_ORDER_NOTE_KEY, PaymentCaptureResult, RazorpayOrder, RefundResult, TransactionState
+)
 from backend.app.database.repositories import order_repo, payment_repo, refund_repo, spend_repo
 from backend.app.payment.state_machine import state_machine
 
@@ -206,11 +208,131 @@ class RazorpayClientWrapper:
     def fetch_order(self, order_id: str, db: Optional[Session] = None) -> Optional[RazorpayOrder]:
         return order_repo.get_order(order_id, db=db)
 
-    def create_payment_link(self, order: RazorpayOrder) -> Optional[str]:
+    @staticmethod
+    def _describe_api_error(status_code: int, detail: str) -> str:
+        """
+        Turn a Razorpay error body into one sentence a buyer-facing surface can show.
+
+        The reason matters more than the status: a test-mode quota being exhausted and
+        a bad key both surface as "no payment link", and only the text tells them apart.
+        """
+        code = ""
+        description = ""
+        try:
+            error = (json.loads(detail) or {}).get("error") or {}
+            code = str(error.get("code") or "")
+            description = str(error.get("description") or "")
+        except Exception:
+            description = (detail or "").strip()[:200]
+
+        if code == "RATE_LIMIT_EXCEEDED" or status_code == 429:
+            return (
+                f"Razorpay rejected the request as rate limited (HTTP {status_code})"
+                + (f": {description}" if description else "")
+                + ". Test-mode quotas reset on Razorpay's side; switch payment.provider_mode "
+                  "to 'simulator' to keep testing offline."
+            )
+        if status_code in (401, 403):
+            return f"Razorpay rejected the API credentials (HTTP {status_code})" + (f": {description}" if description else "") + "."
+        return (
+            f"Razorpay returned HTTP {status_code}"
+            + (f": {description}" if description else "")
+            + "."
+        )
+
+    def _api_call(
+        self,
+        path: str,
+        method: str = "GET",
+        payload: Optional[Dict[str, Any]] = None,
+        timeout: int = 15
+    ) -> tuple[Optional[Dict[str, Any]], Optional[str]]:
+        """
+        Authenticated call against the Razorpay REST API.
+
+        Returns `(payload, reason)`: exactly one is set. The reason exists because a
+        silently swallowed failure here shows up far away as a missing "Pay" button
+        with nothing to explain it.
+        """
         if not self.key_id or not settings.RAZORPAY_KEY_SECRET:
-            logger.warning("RAZORPAY_KEY_ID or RAZORPAY_KEY_SECRET is not set. Skipping payment link creation.")
-            return None
-        body = json.dumps({
+            logger.warning("RAZORPAY_KEY_ID or RAZORPAY_KEY_SECRET is not set. Skipping Razorpay API call %s.", path)
+            return None, "Razorpay API credentials are not configured (RAZORPAY_KEY_ID / RAZORPAY_KEY_SECRET)."
+
+        body = json.dumps(payload).encode("utf-8") if payload is not None else None
+        credentials = base64.b64encode(
+            f"{self.key_id}:{settings.RAZORPAY_KEY_SECRET}".encode("utf-8")
+        ).decode("ascii")
+        request = Request(
+            f"https://api.razorpay.com/v1{path}",
+            data=body,
+            method=method,
+            headers={"Authorization": f"Basic {credentials}", "Content-Type": "application/json"}
+        )
+        try:
+            with urlopen(request, timeout=timeout) as response:
+                return json.loads(response.read().decode("utf-8")), None
+        except HTTPError as error:
+            try:
+                detail = error.read().decode("utf-8")
+            except Exception:
+                detail = ""
+            logger.error("Razorpay %s %s failed with HTTP %s. %s", method, path, error.code, detail)
+            return None, self._describe_api_error(error.code, detail)
+        except URLError as error:
+            logger.error("Unable to reach Razorpay for %s %s: %s", method, path, error)
+            return None, f"Razorpay is unreachable: {error.reason}."
+        except Exception as error:
+            logger.error("Razorpay %s %s failed: %s", method, path, error)
+            return None, f"Razorpay request failed: {error}."
+
+    def _api_request(
+        self,
+        path: str,
+        method: str = "GET",
+        payload: Optional[Dict[str, Any]] = None,
+        timeout: int = 15
+    ) -> Optional[Dict[str, Any]]:
+        """Authenticated call against the Razorpay REST API. Returns None on any failure."""
+        return self._api_call(path, method=method, payload=payload, timeout=timeout)[0]
+
+    def create_payment_link(self, order: RazorpayOrder, db: Optional[Session] = None) -> Optional[str]:
+        """
+        Create a hosted payment link for an order and return its short URL.
+
+        A payment link mints its OWN Razorpay order when it is paid, so the payment
+        that comes back references that link order, not the one stored locally. Both
+        `reference_id` and `notes` therefore carry the local order id, and the link id
+        is persisted onto the order, so webhooks and reconciliation can map back here.
+        """
+        return self.create_payment_link_result(order, db=db)[0]
+
+    def create_payment_link_result(
+        self,
+        order: RazorpayOrder,
+        db: Optional[Session] = None
+    ) -> tuple[Optional[str], Optional[str]]:
+        """
+        Same as `create_payment_link`, but returns `(short_url, reason)` so a caller can
+        tell the buyer *why* no link exists instead of rendering nothing at all.
+
+        A link already minted for this order is reused: test-mode payment links are a
+        finite quota, and re-issuing one per retry burns it for no benefit.
+        """
+        existing = (order.notes or {}).get("payment_link_url")
+        if existing:
+            return existing, None
+
+        # Simulator mode must stay offline. Calling the live API here mints a real
+        # test-mode link against a locally-invented order id, burns the account's
+        # payment_link quota, and makes "switch to simulator" fail to isolate anything.
+        if settings.PAYMENT_PROVIDER_MODE != "razorpay":
+            return None, (
+                "Payment links require payment.provider_mode 'razorpay'; "
+                f"the current mode is '{settings.PAYMENT_PROVIDER_MODE}'. "
+                "Pay via the cart page's test payment instead."
+            )
+
+        payload, reason = self._api_call("/payment_links", method="POST", payload={
             "amount": int(round(order.amount * 100)),
             "currency": "INR",
             "accept_partial": False,
@@ -225,29 +347,51 @@ class RazorpayClientWrapper:
                 "sms": False,
                 "email": False
             },
-            "reminder_enable": False
-        }).encode("utf-8")
-        credentials = base64.b64encode(f"{self.key_id}:{settings.RAZORPAY_KEY_SECRET}".encode("utf-8")).decode("ascii")
-        request = Request(
-            "https://api.razorpay.com/v1/payment_links",
-            data=body,
-            method="POST",
-            headers={"Authorization": f"Basic {credentials}", "Content-Type": "application/json"}
-        )
-        try:
-            with urlopen(request, timeout=15) as response:
-                payload = json.loads(response.read().decode("utf-8"))
-                return payload["short_url"]
-        except HTTPError as error:
-            try:
-                error_body = error.read().decode("utf-8")
-                logger.error(f"Failed to create Razorpay payment link for Order ID '{order.order_id}': {error}. Response: {error_body}")
-            except Exception:
-                logger.error(f"Failed to create Razorpay payment link for Order ID '{order.order_id}': {error}")
+            "reminder_enable": False,
+            "notes": {LOCAL_ORDER_NOTE_KEY: order.order_id},
+        })
+        if not payload:
+            logger.error("Failed to create Razorpay payment link for Order ID '%s'. %s", order.order_id, reason or "")
+            return None, reason or "Razorpay did not return a payment link."
+
+        short_url = payload.get("short_url")
+        link_id = payload.get("id")
+        if link_id:
+            order_repo.merge_notes(
+                order.order_id,
+                {"payment_link_id": link_id, "payment_link_url": short_url or ""},
+                db=db
+            )
+        return short_url, None
+
+    def fetch_remote_payment_link(self, link_id: str) -> Optional[Dict[str, Any]]:
+        """Read a payment link's authoritative status and its payment attempts from Razorpay."""
+        return self._api_request(f"/payment_links/{link_id}")
+
+    def find_remote_payment_link_by_reference(self, reference_id: str) -> Optional[Dict[str, Any]]:
+        """
+        Locate a payment link by the local order id it was created against.
+
+        Needed for orders whose link id was never stored locally; Razorpay has no
+        reference_id filter on this endpoint, so the list is scanned client-side.
+        """
+        payload = self._api_request("/payment_links")
+        links = (payload or {}).get("payment_links")
+        if not isinstance(links, list):
             return None
-        except Exception as error:
-            logger.error(f"Failed to create Razorpay payment link for Order ID '{order.order_id}': {error}")
+        matches = [
+            link for link in links
+            if isinstance(link, dict) and link.get("reference_id") == reference_id
+        ]
+        if not matches:
             return None
+        return max(matches, key=lambda link: link.get("created_at") or 0)
+
+    def fetch_remote_order_payments(self, remote_order_id: str) -> list:
+        """Read the payment attempts Razorpay holds against one of its order ids."""
+        payload = self._api_request(f"/orders/{remote_order_id}/payments")
+        items = (payload or {}).get("items")
+        return items if isinstance(items, list) else []
 
     def fetch_payment(self, payment_id: str, db: Optional[Session] = None) -> Optional[PaymentCaptureResult]:
         return payment_repo.get_payment(payment_id, db=db)

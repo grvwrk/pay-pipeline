@@ -254,7 +254,7 @@ class GroqCatalogAgent:
                                 max_price=parsed_max_price
                             ))
                             for p in found_products:
-                                products_map[p.sku] = p
+                                products_map[p.id] = p
 
                             messages.append({
                                 "role": "tool",
@@ -267,7 +267,7 @@ class GroqCatalogAgent:
                             sku = str(args.get("product_id", ""))
                             p = read_tools.get_product(sku)
                             if p:
-                                products_map[p.sku] = p
+                                products_map[p.id] = p
 
                             messages.append({
                                 "role": "tool",

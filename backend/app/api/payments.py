@@ -3,6 +3,7 @@ from pydantic import BaseModel, Field
 from typing import Optional
 
 from backend.app.config import settings
+from backend.app.payment.reconciler import payment_reconciler
 from backend.app.tools.money_tools import money_tools
 from backend.app.database.repositories import payment_repo, order_repo
 
@@ -19,6 +20,32 @@ def get_checkout_config():
             detail="Razorpay key ID is not configured in application settings."
         )
     return {"key_id": key_id, "currency": "INR"}
+
+@router.post("/reconcile-pending")
+def reconcile_pending_payments(limit: int = 50):
+    """
+    Pull the authoritative status of every unsettled order from Razorpay.
+
+    Webhooks remain the primary path; this exists because Razorpay cannot deliver one
+    to an unreachable host (local development without a public tunnel), which otherwise
+    leaves paid orders stuck in ORDER_CREATED.
+    """
+    return payment_reconciler.reconcile_pending(limit=limit)
+
+
+@router.post("/reconcile/{order_id}")
+def reconcile_payment(order_id: str):
+    """Pull one order's authoritative payment status from Razorpay and apply it locally."""
+    try:
+        return payment_reconciler.reconcile_order(order_id)
+    except ValueError as error:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(error)) from error
+    except Exception as error:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Reconciliation against Razorpay failed: {error}"
+        ) from error
+
 
 @router.get("/{payment_id}")
 def get_payment_details(payment_id: str):

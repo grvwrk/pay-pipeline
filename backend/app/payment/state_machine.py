@@ -25,7 +25,15 @@ class TransactionStateMachine:
             TransactionState.DENIED
         ],
         TransactionState.PAYMENT_CAPTURED: [TransactionState.COMPLETED, TransactionState.REFUNDED],
-        TransactionState.PAYMENT_FAILED: [TransactionState.PAYMENT_PENDING, TransactionState.DENIED, TransactionState.ORDER_CREATED],
+        # A failed attempt does not close the order: the same payment link or order
+        # can be retried and succeed, so capture stays reachable from here.
+        TransactionState.PAYMENT_FAILED: [
+            TransactionState.PAYMENT_PENDING,
+            TransactionState.PAYMENT_CAPTURED,
+            TransactionState.COMPLETED,
+            TransactionState.DENIED,
+            TransactionState.ORDER_CREATED
+        ],
         TransactionState.COMPLETED: [TransactionState.REFUNDED],
         TransactionState.REFUNDED: [],
         TransactionState.DENIED: []

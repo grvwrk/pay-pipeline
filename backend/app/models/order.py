@@ -4,6 +4,11 @@ from enum import Enum
 import datetime
 
 
+# Razorpay note/reference key carrying this system's own order id through a
+# payment link, whose captured payment otherwise belongs to a different order.
+LOCAL_ORDER_NOTE_KEY = "pay_pipeline_order_id"
+
+
 class TransactionState(str, Enum):
     DISCOVERED = "DISCOVERED"
     SELECTED = "SELECTED"

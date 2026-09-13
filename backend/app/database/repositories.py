@@ -16,6 +16,57 @@ from backend.app.models.order import RazorpayOrder, PaymentCaptureResult, Refund
 from backend.app.models.audit import AuditRecord
 
 
+def _to_utc_iso(value: Optional[datetime]) -> Optional[str]:
+    """
+    Render a stored timestamp as an explicit UTC ISO string.
+
+    SQLite hands these back as naive datetimes, and a naive ISO string is read as
+    *local* time by browsers, so the UTC marker has to be re-attached on the way out.
+    """
+    if value is None:
+        return None
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=timezone.utc)
+    return value.isoformat()
+
+
+def _from_iso(value: Optional[str]) -> Optional[datetime]:
+    """Parse a domain model's ISO timestamp back into a datetime for storage."""
+    if not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(value)
+    except (TypeError, ValueError):
+        return None
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+
+
+def _order_model_to_domain(om: OrderModel) -> RazorpayOrder:
+    """
+    Rebuild the domain order from its row.
+
+    `created_at` is passed through explicitly: RazorpayOrder defaults it to *now*, so
+    omitting it silently restamps every order with the time it was read, and the
+    creation time appears to change on every refresh.
+    """
+    fields = dict(
+        order_id=om.order_id,
+        cart_id=om.cart_id,
+        amount=om.amount,
+        amount_in_paise=om.amount_in_paise,
+        currency=om.currency,
+        status=om.status,
+        receipt=om.receipt or "",
+        notes=om.notes,
+        state=TransactionState(om.state) if om.state in TransactionState._value2member_map_ else TransactionState.ORDER_CREATED,
+        idempotency_key=om.idempotency_key,
+    )
+    stored = _to_utc_iso(om.created_at)
+    if stored:
+        fields["created_at"] = stored
+    return RazorpayOrder(**fields)
+
+
 def _product_model_to_domain(pm: ProductModel) -> Product:
     return Product(
         id=pm.id,
@@ -80,7 +131,13 @@ class ProductRepository:
                 scored_items = []
                 for p in candidates:
                     score = 0
-                    searchable_text = f"{p.name} {p.category} {' '.join(p.tags)} {' '.join(str(v) for v in p.specs.values())} {p.description}".lower()
+                    searchable_text = f"{p.id} {p.name} {p.category} {' '.join(p.tags)} {' '.join(str(v) for v in p.specs.values())} {p.description}".lower()
+
+                    # A query carrying an exact SKU is an identifier, not a keyword: without
+                    # this the id scores 0 everywhere and every "Buy <sku>" returns nothing,
+                    # so a purchase can never report what else was in stock.
+                    if p.id.lower() in tokens:
+                        score += 100
 
                     for token in tokens:
                         if token in p.name.lower():
@@ -318,6 +375,13 @@ class OrderRepository:
     def create_order(self, order: RazorpayOrder, db: Optional[Session] = None) -> RazorpayOrder:
         s = db or SessionLocal()
         try:
+            # merge() also serves idempotent retries of an existing order, so the
+            # original creation time is preserved rather than reset to this attempt.
+            existing = s.query(OrderModel).filter(OrderModel.order_id == order.order_id).first()
+            created_at = (
+                existing.created_at if existing is not None and existing.created_at
+                else (_from_iso(order.created_at) or datetime.now(timezone.utc))
+            )
             om = OrderModel(
                 order_id=order.order_id,
                 cart_id=order.cart_id,
@@ -329,7 +393,8 @@ class OrderRepository:
                 receipt=order.receipt,
                 state=order.state.value if isinstance(order.state, TransactionState) else str(order.state),
                 notes_json=json.dumps(order.notes or {}, default=str),
-                idempotency_key=order.idempotency_key
+                idempotency_key=order.idempotency_key,
+                created_at=created_at
             )
             s.merge(om)
             if not db:
@@ -349,18 +414,54 @@ class OrderRepository:
             om = s.query(OrderModel).filter(OrderModel.order_id == order_id).first()
             if not om:
                 return None
-            return RazorpayOrder(
-                order_id=om.order_id,
-                cart_id=om.cart_id,
-                amount=om.amount,
-                amount_in_paise=om.amount_in_paise,
-                currency=om.currency,
-                status=om.status,
-                receipt=om.receipt or "",
-                notes=om.notes,
-                state=TransactionState(om.state) if om.state in TransactionState._value2member_map_ else TransactionState.ORDER_CREATED,
-                idempotency_key=om.idempotency_key
+            return _order_model_to_domain(om)
+        finally:
+            if not db:
+                s.close()
+
+    def find_by_note(self, key: str, value: str, db: Optional[Session] = None) -> Optional[RazorpayOrder]:
+        """
+        Last-resort lookup for an order by one of its stored notes, used to map a
+        Razorpay payment link back to the order it was created for.
+        """
+        if not key or not value:
+            return None
+        s = db or SessionLocal()
+        try:
+            needle = json.dumps({key: value})[1:-1]  # '"key": "value"'
+            om = (
+                s.query(OrderModel)
+                .filter(OrderModel.notes_json.like(f"%{needle}%"))
+                .order_by(OrderModel.created_at.desc())
+                .first()
             )
+            return self.get_order(om.order_id, db=s) if om else None
+        finally:
+            if not db:
+                s.close()
+
+    def merge_notes(self, order_id: str, extra: Dict[str, str], db: Optional[Session] = None) -> Optional[RazorpayOrder]:
+        """Merge additional key/values into an order's notes without dropping existing ones."""
+        s = db or SessionLocal()
+        try:
+            om = s.query(OrderModel).filter(OrderModel.order_id == order_id).first()
+            if not om:
+                return None
+            try:
+                current = json.loads(om.notes_json) if om.notes_json else {}
+            except (TypeError, ValueError):
+                current = {}
+            if not isinstance(current, dict):
+                current = {}
+            current.update({k: v for k, v in extra.items() if v is not None})
+            om.notes_json = json.dumps(current, default=str)
+            if not db:
+                s.commit()
+            return self.get_order(order_id, db=s)
+        except Exception:
+            if not db:
+                s.rollback()
+            raise
         finally:
             if not db:
                 s.close()
@@ -391,21 +492,7 @@ class OrderRepository:
             if user_id:
                 query = query.filter(OrderModel.user_id == user_id)
             models = query.order_by(OrderModel.created_at.desc()).limit(limit).all()
-            results = []
-            for om in models:
-                results.append(RazorpayOrder(
-                    order_id=om.order_id,
-                    cart_id=om.cart_id,
-                    amount=om.amount,
-                    amount_in_paise=om.amount_in_paise,
-                    currency=om.currency,
-                    status=om.status,
-                    receipt=om.receipt or "",
-                    notes=om.notes,
-                    state=TransactionState(om.state) if om.state in TransactionState._value2member_map_ else TransactionState.ORDER_CREATED,
-                    idempotency_key=om.idempotency_key
-                ))
-            return results
+            return [_order_model_to_domain(om) for om in models]
         finally:
             if not db:
                 s.close()
@@ -445,7 +532,7 @@ class PaymentRepository:
             pm = s.query(PaymentModel).filter(PaymentModel.payment_id == payment_id).first()
             if not pm:
                 return None
-            return PaymentCaptureResult(
+            fields = dict(
                 payment_id=pm.payment_id,
                 order_id=pm.order_id,
                 amount=pm.amount,
@@ -453,8 +540,13 @@ class PaymentRepository:
                 status=pm.status,
                 method=pm.method,
                 error_code=pm.error_code,
-                error_description=pm.error_description
+                error_description=pm.error_description,
             )
+            # Same trap as orders: PaymentCaptureResult defaults captured_at to now().
+            captured = _to_utc_iso(pm.verified_at or pm.created_at)
+            if captured:
+                fields["captured_at"] = captured
+            return PaymentCaptureResult(**fields)
         finally:
             if not db:
                 s.close()
@@ -495,7 +587,8 @@ class RefundRepository:
                 user_id=user_id,
                 amount=refund.amount,
                 currency=refund.currency,
-                status=refund.status
+                status=refund.status,
+                reason=refund.reason
             )
             s.merge(rm)
             if not db:
@@ -515,14 +608,19 @@ class RefundRepository:
             rm = s.query(RefundModel).filter(RefundModel.refund_id == refund_id).first()
             if not rm:
                 return None
-            return RefundResult(
+            fields = dict(
                 refund_id=rm.refund_id,
                 payment_id=rm.payment_id,
                 order_id=rm.order_id,
                 amount=rm.amount,
                 currency=rm.currency,
-                status=rm.status
+                status=rm.status,
+                reason=rm.reason or "Customer requested refund",
             )
+            processed = _to_utc_iso(rm.created_at)
+            if processed:
+                fields["processed_at"] = processed
+            return RefundResult(**fields)
         finally:
             if not db:
                 s.close()
